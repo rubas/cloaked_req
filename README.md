@@ -1,6 +1,6 @@
 # cloaked_req
 
-`cloaked_req` is a Req adapter backed by Rust [`wreq`](https://docs.rs/wreq/latest/wreq/), focused on browser impersonation.
+`cloaked_req` is a Req adapter backed by Rust [`wreq`](https://docs.rs/wreq/latest/wreq/), focused on browser impersonation and performance.
 
 ## Goal
 
@@ -73,3 +73,46 @@ Profiles based on `wreq-util 3.0.0-rc.10`.
 - Native failures are returned to Req as `CloakedReq.AdapterError`.
 - Network I/O runs via Rustler dirty scheduler NIF.
 - TLS verification stays enabled by default. `:insecure_skip_verify` is opt-in.
+
+## DNS Resolution
+
+DNS is resolved asynchronously via [hickory-dns](https://github.com/hickory-dns/hickory-dns) on the shared tokio runtime — no blocking `getaddrinfo` calls. Responses are cached by TTL, so repeat lookups to the same host skip the network. The resolver reads `/etc/resolv.conf` for system nameservers and supports IPv4+IPv6 dual-stack.
+
+## Limitations
+
+- **No HTTP/3 / QUIC** — wreq supports HTTP/1.1 and HTTP/2 only. QUIC transport fingerprinting (JA4QUIC) is not available. If HTTP/3 fingerprinting is critical for your use case, consider a Go-based alternative like [surf](https://github.com/enetx/surf) which supports HTTP/3 with full QUIC fingerprinting — though it would require a different integration approach (sidecar/Port rather than NIF).
+
+## Benchmark
+
+50 sequential GET requests to a local HTTP server, 3 warmup rounds. Measures pure adapter overhead without network variance.
+
+```bash
+CLOAKED_REQ_BUILD=1 mix run bench/adapter_perf.exs
+```
+
+### Run 1
+
+| Adapter               | min     | median  | mean    | p99     | max     |
+| --------------------- | ------- | ------- | ------- | ------- | ------- |
+| Req (Finch)           | 0.13 ms | 0.14 ms | 0.15 ms | 0.34 ms | 0.34 ms |
+| CloakedReq (wreq NIF) | 0.05 ms | 0.06 ms | 0.07 ms | 0.17 ms | 0.17 ms |
+
+CloakedReq median is 54.7 % faster than Req.
+
+### Run 2
+
+| Adapter               | min     | median  | mean    | p99     | max     |
+| --------------------- | ------- | ------- | ------- | ------- | ------- |
+| Req (Finch)           | 0.11 ms | 0.15 ms | 0.16 ms | 0.36 ms | 0.36 ms |
+| CloakedReq (wreq NIF) | 0.07 ms | 0.08 ms | 0.09 ms | 0.24 ms | 0.24 ms |
+
+CloakedReq median is 43.5 % faster than Req.
+
+### Run 3
+
+| Adapter               | min     | median  | mean    | p99     | max     |
+| --------------------- | ------- | ------- | ------- | ------- | ------- |
+| Req (Finch)           | 0.12 ms | 0.14 ms | 0.16 ms | 0.35 ms | 0.35 ms |
+| CloakedReq (wreq NIF) | 0.07 ms | 0.09 ms | 0.09 ms | 0.25 ms | 0.25 ms |
+
+CloakedReq median is 41.0 % faster than Req.

@@ -40,13 +40,13 @@ defmodule CloakedReq.AdapterTest do
       |> Req.new()
       |> CloakedReq.attach(impersonate: :chrome_136, insecure_skip_verify: true)
 
-    assert {:ok, payload} = Request.to_native_payload(request)
-    assert payload["method"] == "POST"
-    assert payload["url"] == "https://example.com"
-    assert payload["body_base64"] == Base.encode64("payload")
-    assert payload["emulation"] == "chrome_136"
-    assert payload["insecure_skip_verify"]
-    assert ["x-demo", "1"] in payload["headers"]
+    assert {:ok, {payload, body}} = Request.to_native_payload(request)
+    assert payload[:method] == "POST"
+    assert payload[:url] == "https://example.com"
+    assert body == "payload"
+    assert payload[:emulation] == "chrome_136"
+    assert payload[:insecure_skip_verify]
+    assert {"x-demo", "1"} in payload[:headers]
   end
 
   test "req bridge rejects streaming into adapters" do
@@ -182,8 +182,8 @@ defmodule CloakedReq.AdapterTest do
       |> Req.new()
       |> CloakedReq.attach()
 
-    assert {:ok, payload} = Request.to_native_payload(request)
-    assert payload["body_base64"] == Base.encode64("hello world")
+    assert {:ok, {_payload, body}} = Request.to_native_payload(request)
+    assert body == "hello world"
   end
 
   test "non-iodata body (integer) returns error" do
@@ -198,14 +198,14 @@ defmodule CloakedReq.AdapterTest do
              Request.to_native_payload(request)
   end
 
-  test "nil body produces null body_base64" do
+  test "nil body produces nil body element" do
     request =
       [url: "https://example.com"]
       |> Req.new()
       |> CloakedReq.attach()
 
-    assert {:ok, payload} = Request.to_native_payload(request)
-    assert payload["body_base64"] == nil
+    assert {:ok, {_payload, body}} = Request.to_native_payload(request)
+    assert body == nil
   end
 
   # -------------------------------------------------------------------
@@ -248,8 +248,8 @@ defmodule CloakedReq.AdapterTest do
       |> Req.new()
       |> CloakedReq.attach(max_body_size: :unlimited)
 
-    assert {:ok, payload} = Request.to_native_payload(request)
-    assert payload["max_body_size_bytes"] == nil
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:max_body_size_bytes] == nil
   end
 
   test "request body exceeding max_body_size returns error" do
@@ -271,8 +271,8 @@ defmodule CloakedReq.AdapterTest do
       |> Req.new()
       |> CloakedReq.attach(max_body_size: 1000)
 
-    assert {:ok, payload} = Request.to_native_payload(request)
-    assert payload["body_base64"] == Base.encode64("small")
+    assert {:ok, {_payload, body}} = Request.to_native_payload(request)
+    assert body == "small"
   end
 
   test "iodata body exceeding max_body_size returns error" do
@@ -294,39 +294,68 @@ defmodule CloakedReq.AdapterTest do
       |> Req.new()
       |> CloakedReq.attach()
 
-    assert {:ok, payload} = Request.to_native_payload(request)
-    assert payload["max_body_size_bytes"] == 10_485_760
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:max_body_size_bytes] == 10_485_760
   end
 
   # -------------------------------------------------------------------
-  # Response decoding: to_req_response/1
+  # Cookie jar option validation
   # -------------------------------------------------------------------
 
-  test "to_req_response/1 rejects missing status key" do
+  test "non-CookieJar cookie_jar value returns error" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(cookie_jar: %{ref: make_ref()})
+
+    assert {^request, %AdapterError{} = exception} = CloakedReq.run(request)
+    assert exception.message == "invalid_request: cookie_jar must be a %CloakedReq.CookieJar{}"
+  end
+
+  # -------------------------------------------------------------------
+  # Response decoding: from_native/2
+  # -------------------------------------------------------------------
+
+  test "from_native/2 rejects missing status key" do
     assert {:error, %Error{type: :invalid_native_response}} =
-             Response.from_native(%{"headers" => [], "body_base64" => ""})
+             Response.from_native(%{headers: []}, "")
   end
 
-  test "to_req_response/1 rejects non-integer status" do
+  test "from_native/2 rejects non-integer status" do
     assert {:error, %Error{type: :invalid_native_response}} =
-             Response.from_native(%{"status" => "200", "headers" => [], "body_base64" => ""})
+             Response.from_native(%{status: "200", headers: []}, "")
   end
 
-  test "to_req_response/1 rejects invalid base64 body" do
-    assert {:error, %Error{type: :invalid_native_response, message: "body_base64 is not valid base64"}} =
-             Response.from_native(%{"status" => 200, "headers" => [], "body_base64" => "###invalid###"})
-  end
-
-  test "to_req_response/1 round-trips a valid response" do
-    native = %{
-      "status" => 200,
-      "headers" => [["content-type", "text/plain"]],
-      "body_base64" => Base.encode64("ok")
+  test "from_native/2 round-trips a valid response" do
+    meta = %{
+      status: 200,
+      headers: [{"content-type", "text/plain"}]
     }
 
-    assert {:ok, %Req.Response{} = response} = Response.from_native(native)
+    assert {:ok, %Req.Response{} = response} = Response.from_native(meta, "ok")
     assert response.status == 200
     assert response.body == "ok"
     assert response.headers["content-type"] == ["text/plain"]
+  end
+
+  test "from_native/2 maps url to private when present" do
+    meta = %{
+      status: 200,
+      url: "http://127.0.0.1:9999/",
+      headers: []
+    }
+
+    assert {:ok, %Req.Response{} = response} = Response.from_native(meta, "ok")
+    assert response.private[:cloaked_req_url] == "http://127.0.0.1:9999/"
+  end
+
+  test "from_native/2 omits url private when url is missing" do
+    meta = %{
+      status: 200,
+      headers: []
+    }
+
+    assert {:ok, %Req.Response{} = response} = Response.from_native(meta, "ok")
+    refute Map.has_key?(response.private, :cloaked_req_url)
   end
 end

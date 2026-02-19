@@ -1,9 +1,10 @@
 defmodule CloakedReq.Request do
   @moduledoc """
-  Converts a `Req.Request` into the JSON-serializable map expected by the Rust NIF.
+  Converts a `Req.Request` into the metadata map and body expected by the Rust NIF.
 
   Validates and normalizes all adapter options (impersonate, timeout, body size,
-  TLS verification) and encodes the request body as base64.
+  TLS verification). The metadata map is JSON-encoded by `CloakedReq.Native`
+  before passing to the NIF; the body is passed as a raw binary.
   """
 
   alias CloakedReq.Error
@@ -11,12 +12,12 @@ defmodule CloakedReq.Request do
   @default_max_body_size 10_485_760
 
   @doc """
-  Builds a native payload map from a `Req.Request`.
+  Builds a native payload tuple from a `Req.Request`.
 
   Validates the request (URL scheme, body encoding, adapter options) and returns
-  `{:ok, payload}` or `{:error, %CloakedReq.Error{}}`.
+  `{:ok, {metadata_map, body_binary}}` or `{:error, %CloakedReq.Error{}}`.
   """
-  @spec to_native_payload(Req.Request.t()) :: {:ok, map()} | {:error, Error.t()}
+  @spec to_native_payload(Req.Request.t()) :: {:ok, {map(), binary() | nil}} | {:error, Error.t()}
   def to_native_payload(%Req.Request{} = request) do
     with :ok <- validate_into(request),
          :ok <- validate_url(request.url),
@@ -30,16 +31,15 @@ defmodule CloakedReq.Request do
          {:ok, insecure_skip_verify} <-
            normalize_insecure_skip_verify(Req.Request.get_option(request, :insecure_skip_verify, false)) do
       {:ok,
-       %{
-         "method" => request.method |> Atom.to_string() |> String.upcase(),
-         "url" => URI.to_string(request.url),
-         "headers" => Enum.map(flat_headers, fn {name, value} -> [name, value] end),
-         "body_base64" => if(is_binary(body), do: Base.encode64(body)),
-         "receive_timeout_ms" => receive_timeout,
-         "emulation" => emulation,
-         "insecure_skip_verify" => insecure_skip_verify,
-         "max_body_size_bytes" => max_body_size
-       }}
+       {%{
+          method: request.method |> Atom.to_string() |> String.upcase(),
+          url: URI.to_string(request.url),
+          headers: flat_headers,
+          receive_timeout_ms: receive_timeout,
+          emulation: emulation,
+          insecure_skip_verify: insecure_skip_verify,
+          max_body_size_bytes: max_body_size
+        }, body}}
     end
   end
 

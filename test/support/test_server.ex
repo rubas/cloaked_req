@@ -102,6 +102,8 @@ defmodule CloakedReq.TestServer do
 
   defp status_reason(200), do: "OK"
   defp status_reason(201), do: "Created"
+  defp status_reason(302), do: "Found"
+  defp status_reason(303), do: "See Other"
   defp status_reason(404), do: "Not Found"
   defp status_reason(500), do: "Internal Server Error"
   defp status_reason(_), do: "Unknown"

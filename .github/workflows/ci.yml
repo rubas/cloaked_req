@@ -23,8 +23,10 @@ jobs:
         include:
           - otp: "27"
             elixir: "1.19"
-          - otp: "28"
-            elixir: "1.20-rc"
+            version-type: "loose"
+          - otp: "28.3.1"
+            elixir: "1.20.0-rc.1"
+            version-type: "strict"
 
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +50,7 @@ jobs:
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
+          version-type: ${{ matrix.version-type }}
 
       - name: Cache Elixir
         uses: actions/cache@v4

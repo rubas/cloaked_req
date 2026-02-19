@@ -8,18 +8,18 @@ defmodule CloakedReq.ExternalFingerprintTest do
 
   @moduletag :external
 
-  @fingerprint_url "https://tls.peet.ws/api/all"
+  @fingerprint_url "https://tlsinfo.me/json"
 
   test "impersonated request has a different JA4 fingerprint than plain Req" do
     plain_fingerprint =
-      [url: @fingerprint_url, connect_options: [transport_opts: [verify: :verify_none]]]
+      [url: @fingerprint_url]
       |> Req.new()
       |> fetch_fingerprint()
 
     impersonated_fingerprint =
       [url: @fingerprint_url]
       |> Req.new()
-      |> CloakedReq.attach(impersonate: :chrome_136, insecure_skip_verify: true)
+      |> CloakedReq.attach(impersonate: :chrome_136)
       |> fetch_fingerprint()
 
     assert plain_fingerprint, "plain Req must return a JA4 fingerprint"
@@ -27,18 +27,17 @@ defmodule CloakedReq.ExternalFingerprintTest do
     assert plain_fingerprint != impersonated_fingerprint
   end
 
-  test "impersonated request returns fingerprint payload with JA4 and user agent" do
+  test "impersonated request returns JA3 and JA4 fingerprints" do
     response =
       [url: @fingerprint_url]
       |> Req.new()
-      |> CloakedReq.attach(impersonate: :chrome_136, insecure_skip_verify: true)
+      |> CloakedReq.attach(impersonate: :chrome_136)
       |> Req.get!()
 
     assert response.status in 200..299
     payload = decode_body(response)
-    assert Enum.any?(Map.keys(payload), &String.starts_with?(&1, "ja4"))
-    assert is_binary(payload["user_agent"])
-    assert payload["user_agent"] != ""
+    assert is_binary(payload["ja3"]) and payload["ja3"] != ""
+    assert is_binary(payload["ja4"]) and payload["ja4"] != ""
   end
 
   @spec fetch_fingerprint(Req.Request.t()) :: String.t() | nil

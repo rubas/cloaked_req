@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CLOAKED_REQ_BUILD: "true"
+
+jobs:
+  test:
+    name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - otp: "27"
+            elixir: "1.19"
+          - otp: "28"
+            elixir: "1.20-rc"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake golang-go
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: native/cloaked_req_native/target
+          key: rust-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
+          restore-keys: rust-
+
+      - name: Rust tests
+        run: cargo test --manifest-path native/cloaked_req_native/Cargo.toml
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Cache Elixir
+        uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            ~/.mix
+          key: mix-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: mix-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      - name: Cache Dialyzer PLTs
+        uses: actions/cache@v4
+        with:
+          path: priv/plts
+          key: dialyzer-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: dialyzer-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Compile
+        run: MIX_ENV=test mix compile
+
+      - name: Check formatting
+        run: MIX_ENV=test mix format --check-formatted --dry-run
+
+      - name: Credo
+        run: MIX_ENV=test mix credo --strict
+
+      - name: Dialyzer
+        run: MIX_ENV=test mix dialyzer
+
+      - name: Elixir tests
+        run: MIX_ENV=test mix test --color

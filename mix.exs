@@ -1,7 +1,7 @@
 defmodule CloakedReq.MixProject do
   use Mix.Project
 
-  @version "0.2.0"
+  @version "0.1.0"
 
   @spec project() :: keyword()
   def project do
@@ -58,7 +58,7 @@ defmodule CloakedReq.MixProject do
         "wreq" => "https://docs.rs/wreq/latest/wreq/"
       },
       files:
-        ~w(lib native checksum-*.exs mix.exs README.md CHANGELOG.md LICENSE* .formatter.exs .credo.exs .sobelow-conf dprint.json Taskfile.yml)
+        ~w(lib native/cloaked_req_native/src native/cloaked_req_native/Cargo.toml native/cloaked_req_native/Cargo.lock checksum-*.exs mix.exs README.md CHANGELOG.md LICENSE*)
     ]
   end
 

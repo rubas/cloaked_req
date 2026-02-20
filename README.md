@@ -11,7 +11,7 @@ Keep Req ergonomics while swapping transport to Rust `wreq` for impersonation an
 ```elixir
 def deps do
   [
-    {:cloaked_req, "~> 0.1.0"}
+    {:cloaked_req, "~> 0.2.0"}
   ]
 end
 ```
@@ -34,6 +34,35 @@ Set impersonation later on an existing request:
 request =
   Req.new(url: "https://example.com")
   |> CloakedReq.impersonate(:firefox_136)
+```
+
+## Adapter Options
+
+| Option                  | Type                        | Default | Description                                  |
+| ----------------------- | --------------------------- | ------- | -------------------------------------------- |
+| `:impersonate`          | atom                        | `nil`   | Browser profile (e.g. `:chrome_136`)         |
+| `:cookie_jar`           | `CookieJar.t()`             | `nil`   | Automatic cookie persistence across requests |
+| `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification            |
+| `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max response body size                       |
+
+Req's `:receive_timeout` (default 15s) is also respected.
+
+### Cookie Jar
+
+Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar uses PSL-based domain validation — it rejects cookies set on public suffixes and cross-origin domains.
+
+```elixir
+jar = CloakedReq.CookieJar.new()
+
+# Login — server sets session cookie
+Req.new(url: "https://example.com/login")
+|> CloakedReq.attach(impersonate: :chrome_136, cookie_jar: jar)
+|> Req.post!(body: "user=admin&pass=secret")
+
+# Dashboard — session cookie sent automatically
+Req.new(url: "https://example.com/dashboard")
+|> CloakedReq.attach(impersonate: :chrome_136, cookie_jar: jar)
+|> Req.get!()
 ```
 
 ## Impersonation Profiles
@@ -63,20 +92,6 @@ Profiles based on `wreq-util 3.0.0-rc.10`.
 ### OkHttp
 
 `:okhttp_5`
-
-## Safety Model
-
-- Input validation happens in Elixir before the NIF call.
-- Native boundary uses explicit JSON contracts.
-- Rust NIF panics are caught via `catch_unwind` and converted to `{:error, %CloakedReq.Error{type: :nif_panic}}` — the BEAM VM stays up.
-- Rustler's built-in panic wrapper provides a second catch layer, rescued as `ErlangError` on the Elixir side.
-- Native failures are returned to Req as `CloakedReq.AdapterError`.
-- Network I/O runs via Rustler dirty scheduler NIF.
-- TLS verification stays enabled by default. `:insecure_skip_verify` is opt-in.
-
-## DNS Resolution
-
-DNS is resolved asynchronously via [hickory-dns](https://github.com/hickory-dns/hickory-dns) on the shared tokio runtime — no blocking `getaddrinfo` calls. Responses are cached by TTL, so repeat lookups to the same host skip the network. The resolver reads `/etc/resolv.conf` for system nameservers and supports IPv4+IPv6 dual-stack.
 
 ## Limitations
 

@@ -2,15 +2,19 @@ mod error;
 mod request;
 mod response;
 
+use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use error::NativeError;
 use request::NativeRequest;
-use response::NativeResponse;
-use rustler::{types::atom::Atom, NifResult};
+use response::NativeResponseMeta;
+use rustler::serde::SerdeTerm;
+use rustler::types::binary::{Binary, NewBinary};
+use rustler::{Encoder, Env, ResourceArc, Term};
 use serde_json::{json, Value};
+use wreq::cookie::{CookieStore, Cookies};
 use wreq::{Client, Method};
 use wreq_util::Emulation;
 
@@ -19,9 +23,86 @@ rustler::atoms! {
     error
 }
 
-fn run_with_panic_protection<F>(f: F) -> Result<NativeResponse, NativeError>
+/// Shared tokio runtime for all NIF calls. Created once on first use.
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime must initialize")
+});
+
+/// Cache key: (emulation profile, insecure_skip_verify).
+type ClientKey = (Option<String>, bool);
+
+/// Persistent client pool. Clients are reused across NIF calls for connection
+/// pooling, TLS session resumption, and HTTP keep-alive.
+static CLIENT_CACHE: LazyLock<RwLock<HashMap<ClientKey, Client>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Opaque cookie jar resource held by the BEAM.
+///
+/// Wraps wreq's `Jar` (RFC 6265-compliant cookie store). The jar is
+/// automatically dropped when the Elixir term is garbage collected.
+struct CookieJarResource {
+    jar: wreq::cookie::Jar,
+}
+
+fn get_or_build_client(
+    emulation: Option<&str>,
+    insecure_skip_verify: bool,
+) -> Result<Client, NativeError> {
+    let key = (emulation.map(|s| s.to_string()), insecure_skip_verify);
+
+    // Fast path: read lock
+    {
+        let cache = CLIENT_CACHE.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(client) = cache.get(&key) {
+            return Ok(client.clone());
+        }
+    }
+
+    // Slow path: write lock, double-check
+    let mut cache = CLIENT_CACHE.write().unwrap_or_else(|e| e.into_inner());
+    if let Some(client) = cache.get(&key) {
+        return Ok(client.clone());
+    }
+
+    let mut builder = Client::builder()
+        .pool_max_idle_per_host(20)
+        .connect_timeout(Duration::from_secs(10));
+
+    if let Some(profile_name) = emulation {
+        let profile: Emulation = serde_json::from_value(Value::String(profile_name.to_string()))
+            .map_err(|reason| {
+                NativeError::new(
+                    "invalid_request",
+                    "unknown emulation profile",
+                    json!({"reason": reason.to_string(), "value": profile_name}),
+                )
+            })?;
+
+        builder = builder.emulation(profile);
+    }
+
+    if insecure_skip_verify {
+        builder = builder.cert_verification(false);
+    }
+
+    let client = builder.build().map_err(|reason| {
+        NativeError::new(
+            "transport_error",
+            "failed to build HTTP client",
+            json!({"reason": reason.to_string(), "debug": format!("{reason:?}")}),
+        )
+    })?;
+
+    cache.insert(key, client.clone());
+    Ok(client)
+}
+
+fn run_with_panic_protection<T, F>(f: F) -> Result<T, NativeError>
 where
-    F: FnOnce() -> Result<NativeResponse, NativeError>,
+    F: FnOnce() -> Result<T, NativeError>,
 {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(result) => result,
@@ -36,36 +117,39 @@ where
     }
 }
 
+/// Creates a new empty cookie jar.
+#[rustler::nif]
+fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
+    ResourceArc::new(CookieJarResource {
+        jar: wreq::cookie::Jar::default(),
+    })
+}
+
+/// NIF entry point. Receives a native Elixir map (decoded via NifMap) + optional raw body binary
+/// + optional cookie jar resource.
+/// Returns `{:ok, response_meta_map, body_binary}` or `{:error, error_map}`.
 #[rustler::nif(schedule = "DirtyIo")]
-fn nif_perform_request(payload: String) -> NifResult<(Atom, String)> {
-    let request: NativeRequest = match serde_json::from_str(&payload) {
-        Ok(value) => value,
-        Err(reason) => {
-            let decode_error = NativeError::new(
-                "decode_request",
-                "invalid request payload",
-                json!({"reason": reason.to_string()}),
-            );
-
-            return Ok((error(), decode_error.encode()));
-        }
-    };
-
-    let result = run_with_panic_protection(|| execute_request(request));
+fn nif_perform_request<'a>(
+    env: Env<'a>,
+    request: NativeRequest,
+    body: Option<Binary>,
+    cookie_jar: Option<ResourceArc<CookieJarResource>>,
+) -> Term<'a> {
+    let body_vec = body.map(|b| b.as_slice().to_vec());
+    let result = run_with_panic_protection(|| execute_request(request, body_vec, cookie_jar));
 
     match result {
-        Ok(response) => match serde_json::to_string(&response) {
-            Ok(payload) => Ok((ok(), payload)),
-            Err(reason) => {
-                let err = NativeError::new(
-                    "native_error",
-                    "failed to serialize native success response",
-                    json!({"reason": reason.to_string()}),
-                );
-                Ok((error(), err.encode()))
-            }
-        },
-        Err(native_error) => Ok((error(), native_error.encode())),
+        Ok((meta, response_body)) => {
+            let mut new_bin = NewBinary::new(env, response_body.len());
+            new_bin.as_mut_slice().copy_from_slice(&response_body);
+            let body_binary = Binary::from(new_bin);
+            (ok(), meta, body_binary).encode(env)
+        }
+        Err(native_error) => {
+            let error_value =
+                serde_json::to_value(native_error).expect("NativeError must serialize");
+            (error(), SerdeTerm(error_value)).encode(env)
+        }
     }
 }
 
@@ -74,7 +158,17 @@ async fn read_body_with_limit(
     max_size: Option<u64>,
 ) -> Result<Vec<u8>, NativeError> {
     let limit = max_size.unwrap_or(u64::MAX) as usize;
-    let mut body = Vec::new();
+
+    let content_length = response
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+
+    let mut body = match content_length {
+        Some(len) if len <= limit => Vec::with_capacity(len),
+        _ => Vec::new(),
+    };
 
     while let Some(chunk) = response.chunk().await.map_err(|reason| {
         // reason = Display (user-friendly message), debug = Debug (inner error chain for diagnostics)
@@ -97,48 +191,14 @@ async fn read_body_with_limit(
     Ok(body)
 }
 
-fn execute_request(request: NativeRequest) -> Result<NativeResponse, NativeError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|reason| {
-            NativeError::new(
-                "runtime_error",
-                "failed to initialize tokio runtime",
-                json!({"reason": reason.to_string()}),
-            )
-        })?;
+fn execute_request(
+    request: NativeRequest,
+    body: Option<Vec<u8>>,
+    cookie_jar: Option<ResourceArc<CookieJarResource>>,
+) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
+    let client = get_or_build_client(request.emulation.as_deref(), request.insecure_skip_verify)?;
 
-    runtime.block_on(async move {
-        let mut client_builder = Client::builder();
-
-        if let Some(profile_name) = request.emulation.as_deref() {
-            let profile: Emulation =
-                serde_json::from_value(Value::String(profile_name.to_string())).map_err(
-                    |reason| {
-                        NativeError::new(
-                            "invalid_request",
-                            "unknown emulation profile",
-                            json!({"reason": reason.to_string(), "value": profile_name}),
-                        )
-                    },
-                )?;
-
-            client_builder = client_builder.emulation(profile);
-        }
-
-        if request.insecure_skip_verify {
-            client_builder = client_builder.cert_verification(false);
-        }
-
-        let client = client_builder.build().map_err(|reason| {
-            NativeError::new(
-                "transport_error",
-                "failed to build HTTP client",
-                json!({"reason": reason.to_string(), "debug": format!("{reason:?}")}),
-            )
-        })?;
-
+    RUNTIME.block_on(async move {
         let method = Method::from_bytes(request.method.as_bytes()).map_err(|reason| {
             NativeError::new(
                 "invalid_request",
@@ -151,19 +211,29 @@ fn execute_request(request: NativeRequest) -> Result<NativeResponse, NativeError
             .request(method, request.url.as_str())
             .timeout(Duration::from_millis(request.receive_timeout_ms));
 
-        for [name, value] in request.headers {
+        // Iterate by reference so request.url remains accessible for cookie jar
+        for (name, value) in &request.headers {
             builder = builder.header(name.as_str(), value.as_str());
         }
 
-        if let Some(body_base64) = request.body_base64 {
-            let body = STANDARD.decode(body_base64.as_bytes()).map_err(|reason| {
-                NativeError::new(
-                    "invalid_request",
-                    "body_base64 must be valid base64",
-                    json!({"reason": reason.to_string()}),
-                )
-            })?;
+        // Add cookies from jar before sending
+        if let Some(ref jar) = cookie_jar {
+            if let Ok(parsed_uri) = request.url.parse::<http::Uri>() {
+                match jar.jar.cookies(&parsed_uri) {
+                    Cookies::Compressed(val) => {
+                        builder = builder.header("cookie", val);
+                    }
+                    Cookies::Uncompressed(vals) => {
+                        for val in vals {
+                            builder = builder.header("cookie", val);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
 
+        if let Some(body) = body {
             builder = builder.body(body);
         }
 
@@ -175,32 +245,102 @@ fn execute_request(request: NativeRequest) -> Result<NativeResponse, NativeError
             )
         })?;
 
+        // Store cookies from response into jar (with PSL validation)
+        if let Some(ref jar) = cookie_jar {
+            if let Ok(parsed_uri) = request.url.parse::<http::Uri>() {
+                let host = parsed_uri.host().unwrap_or_default();
+                let set_cookies: Vec<_> = response
+                    .headers()
+                    .get_all("set-cookie")
+                    .iter()
+                    .filter(|hv| is_cookie_domain_safe(hv.as_bytes(), host))
+                    .collect();
+                if !set_cookies.is_empty() {
+                    let mut iter = set_cookies.into_iter();
+                    jar.jar.set_cookies(&mut iter, &parsed_uri);
+                }
+            }
+        }
+
         let status = response.status().as_u16();
         let url = response.uri().to_string();
         let headers = response
             .headers()
             .iter()
             .map(|(name, value)| {
-                [
+                (
                     name.to_string(),
                     String::from_utf8_lossy(value.as_bytes()).into_owned(),
-                ]
+                )
             })
             .collect::<Vec<_>>();
 
-        let body_bytes =
-            read_body_with_limit(&mut response, request.max_body_size_bytes).await?;
+        let body_bytes = read_body_with_limit(&mut response, request.max_body_size_bytes).await?;
 
-        Ok(NativeResponse {
-            status,
-            url,
-            headers,
-            body_base64: STANDARD.encode(body_bytes),
-        })
+        Ok((
+            NativeResponseMeta {
+                status,
+                url,
+                headers,
+            },
+            body_bytes,
+        ))
     })
 }
 
-rustler::init!("Elixir.CloakedReq.Native");
+/// Validates that a `set-cookie` header's Domain attribute is safe to store.
+///
+/// Rejects cookies whose Domain is a public suffix (e.g. "com", "co.uk",
+/// "github.io") or doesn't match the request host at a label boundary.
+/// Host-only cookies (no Domain attribute) are always accepted.
+fn is_cookie_domain_safe(header_bytes: &[u8], request_host: &str) -> bool {
+    let header_str = match std::str::from_utf8(header_bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let domain = match extract_cookie_domain(header_str) {
+        Some(d) => d,
+        None => return true, // No Domain attr → host-only cookie, always safe
+    };
+
+    let effective_domain = domain.trim_start_matches('.').to_lowercase();
+
+    // Reject if the domain is a public suffix (no registrable domain above it)
+    if psl::domain(effective_domain.as_bytes()).is_none() {
+        return false;
+    }
+
+    // Verify origin: Domain must match request host at label boundary
+    let host = request_host.to_lowercase();
+
+    host == effective_domain
+        || (host.len() > effective_domain.len()
+            && host.ends_with(&effective_domain)
+            && host.as_bytes()[host.len() - effective_domain.len() - 1] == b'.')
+}
+
+/// Extracts the Domain attribute value from a set-cookie header string.
+fn extract_cookie_domain(header: &str) -> Option<&str> {
+    header
+        .split(';')
+        .skip(1) // skip name=value
+        .find_map(|attr| {
+            let attr = attr.trim();
+            if attr.len() > 7 && attr[..7].eq_ignore_ascii_case("domain=") {
+                Some(attr[7..].trim())
+            } else {
+                None
+            }
+        })
+}
+
+fn on_load(env: Env, _info: Term) -> bool {
+    let _ = rustler::resource!(CookieJarResource, env);
+    true
+}
+
+rustler::init!("Elixir.CloakedReq.Native", load = on_load);
 
 #[cfg(test)]
 mod tests {
@@ -259,7 +399,6 @@ mod tests {
             method: "GET".to_string(),
             url: "http://example.com".to_string(),
             headers: vec![],
-            body_base64: None,
             receive_timeout_ms: 5_000,
             emulation: None,
             insecure_skip_verify: false,
@@ -272,7 +411,7 @@ mod tests {
         let mut request = base_request();
         request.emulation = Some("unknown_browser".to_string());
 
-        let result = execute_request(request);
+        let result = execute_request(request, None, None);
         assert!(result.is_err());
 
         let err = result.err().expect("expected error");
@@ -281,24 +420,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_body_base64() {
-        let mut request = base_request();
-        request.body_base64 = Some("###not-base64###".to_string());
-
-        let result = execute_request(request);
-        assert!(result.is_err());
-
-        let err = result.err().expect("expected error");
-        assert_eq!(err.type_name, "invalid_request");
-        assert_eq!(err.message, "body_base64 must be valid base64");
-    }
-
-    #[test]
     fn rejects_invalid_http_method() {
         let mut request = base_request();
         request.method = "BAD METHOD".to_string();
 
-        let result = execute_request(request);
+        let result = execute_request(request, None, None);
         assert!(result.is_err());
 
         let err = result.err().expect("expected error");
@@ -319,21 +445,18 @@ mod tests {
 
         let mut request = base_request();
         request.url = url;
-        request.headers = vec![["x-demo".to_string(), "1".to_string()]];
+        request.headers = vec![("x-demo".to_string(), "1".to_string())];
 
-        let response = execute_request(request).expect("request should succeed");
+        let (meta, body) = execute_request(request, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
-        assert_eq!(response.status, 200);
-        let body = STANDARD
-            .decode(response.body_base64.as_bytes())
-            .expect("body should decode");
+        assert_eq!(meta.status, 200);
         assert_eq!(body, b"ok");
-        assert!(response
+        assert!(meta
             .headers
             .iter()
-            .any(|header| header[0].eq_ignore_ascii_case("content-type")
-                && header[1].contains("text/plain")));
+            .any(|header| header.0.eq_ignore_ascii_case("content-type")
+                && header.1.contains("text/plain")));
 
         let raw_request = received_request
             .recv_timeout(StdDuration::from_secs(1))
@@ -357,12 +480,12 @@ mod tests {
         let mut request = base_request();
         request.method = "POST".to_string();
         request.url = url;
-        request.body_base64 = Some(STANDARD.encode("hello"));
 
-        let response = execute_request(request).expect("request should succeed");
+        let (meta, _body) = execute_request(request, Some(b"hello".to_vec()), None)
+            .expect("request should succeed");
         server.join().expect("server thread must join");
 
-        assert_eq!(response.status, 201);
+        assert_eq!(meta.status, 201);
         let raw_request = received_request
             .recv_timeout(StdDuration::from_secs(1))
             .expect("must capture request");
@@ -403,7 +526,7 @@ mod tests {
         request.url = url;
         request.receive_timeout_ms = 50;
 
-        let result = execute_request(request);
+        let result = execute_request(request, None, None);
         server.join().expect("server thread must join");
         assert!(result.is_err());
         let error = result.err().expect("expected error");
@@ -413,57 +536,25 @@ mod tests {
 
     #[test]
     fn fingerprint_smoke_test_with_emulation() {
-        let mut last_error: Option<NativeError> = None;
+        let request = NativeRequest {
+            method: "GET".to_string(),
+            url: "https://tlsinfo.me/json".to_string(),
+            headers: vec![],
+            receive_timeout_ms: 20_000,
+            emulation: Some("chrome_136".to_string()),
+            insecure_skip_verify: false,
+            max_body_size_bytes: None,
+        };
 
-        for attempt in 1..=3 {
-            let request = NativeRequest {
-                method: "GET".to_string(),
-                url: "https://tls.peet.ws/api/all".to_string(),
-                headers: vec![],
-                body_base64: None,
-                receive_timeout_ms: 20_000,
-                emulation: Some("chrome_136".to_string()),
-                insecure_skip_verify: true,
-                max_body_size_bytes: None,
-            };
+        let (meta, body) =
+            execute_request(request, None, None).expect("fingerprint request should succeed");
+        assert!(meta.status >= 200 && meta.status < 300);
 
-            match execute_request(request) {
-                Ok(response) => {
-                    if response.status >= 200 && response.status < 300 {
-                        let decoded = STANDARD
-                            .decode(response.body_base64.as_bytes())
-                            .expect("response body must be base64");
-                        let payload: serde_json::Value =
-                            serde_json::from_slice(&decoded).expect("response body must be JSON");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("response body must be JSON");
 
-                        let has_ja4 = payload
-                            .as_object()
-                            .map(|map| {
-                                map.contains_key("ja4") || map.keys().any(|key| key.starts_with("ja4"))
-                            })
-                            .unwrap_or(false);
-
-                        assert!(has_ja4);
-                        return;
-                    }
-
-                    assert!(response.status >= 500);
-                    return;
-                }
-                Err(error) => {
-                    last_error = Some(error);
-                    if attempt < 3 {
-                        thread::sleep(StdDuration::from_millis(500 * attempt));
-                    }
-                }
-            }
-        }
-
-        let error = last_error.expect("last error must be present after retries");
-        panic!(
-            "fingerprint request failed after retries: {}: {}",
-            error.type_name, error.message
-        );
+        assert!(payload.get("ja4").and_then(|v| v.as_str()).is_some());
+        assert!(payload.get("ja3").and_then(|v| v.as_str()).is_some());
     }
 
     #[test]
@@ -481,7 +572,7 @@ mod tests {
         request.url = url;
         request.max_body_size_bytes = Some(100);
 
-        let result = execute_request(request);
+        let result = execute_request(request, None, None);
         server.join().expect("server thread must join");
 
         assert!(result.is_err());
@@ -505,34 +596,28 @@ mod tests {
         request.url = url;
         request.max_body_size_bytes = Some(1024);
 
-        let response = execute_request(request).expect("request should succeed");
+        let (meta, response_body) =
+            execute_request(request, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
-        assert_eq!(response.status, 200);
-        let decoded = STANDARD
-            .decode(response.body_base64.as_bytes())
-            .expect("body should decode");
-        assert_eq!(decoded, b"ok");
+        assert_eq!(meta.status, 200);
+        assert_eq!(response_body, b"ok");
     }
 
     #[test]
     fn handles_empty_response_body() {
         let raw_response =
-            b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
-                .to_vec();
+            b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_vec();
         let (url, _rx, server) = spawn_test_server(raw_response, 200);
 
         let mut request = base_request();
         request.url = url;
 
-        let response = execute_request(request).expect("request should succeed");
+        let (meta, body) = execute_request(request, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
-        assert_eq!(response.status, 204);
-        let decoded = STANDARD
-            .decode(response.body_base64.as_bytes())
-            .expect("body should decode");
-        assert!(decoded.is_empty());
+        assert_eq!(meta.status, 204);
+        assert!(body.is_empty());
     }
 
     #[test]
@@ -550,14 +635,12 @@ mod tests {
         request.url = url;
         request.max_body_size_bytes = Some(100);
 
-        let response = execute_request(request).expect("request at exact limit should succeed");
+        let (meta, response_body) =
+            execute_request(request, None, None).expect("request at exact limit should succeed");
         server.join().expect("server thread must join");
 
-        assert_eq!(response.status, 200);
-        let decoded = STANDARD
-            .decode(response.body_base64.as_bytes())
-            .expect("body should decode");
-        assert_eq!(decoded.len(), 100);
+        assert_eq!(meta.status, 200);
+        assert_eq!(response_body.len(), 100);
     }
 
     #[test]
@@ -573,21 +656,21 @@ mod tests {
         let mut request = base_request();
         request.url = url;
 
-        let result = execute_request(request);
+        let result = execute_request(request, None, None);
         server.join().expect("server thread must join");
 
         // wreq may reject invalid header bytes at the HTTP parsing level.
         // Either a successful response with lossy-decoded headers or a transport error is acceptable.
         match result {
-            Ok(response) => {
-                assert_eq!(response.status, 200);
-                let binary_header = response
+            Ok((meta, _body)) => {
+                assert_eq!(meta.status, 200);
+                let binary_header = meta
                     .headers
                     .iter()
-                    .find(|h| h[0] == "x-binary")
+                    .find(|h| h.0 == "x-binary")
                     .expect("x-binary header should exist");
                 // from_utf8_lossy replaces invalid bytes with U+FFFD
-                assert!(binary_header[1].contains('\u{FFFD}'));
+                assert!(binary_header.1.contains('\u{FFFD}'));
             }
             Err(err) => {
                 // Acceptable: wreq rejects non-UTF8 headers at parse level
@@ -598,7 +681,7 @@ mod tests {
 
     #[test]
     fn panic_protection_converts_panic_to_nif_panic_error() {
-        let result = run_with_panic_protection(|| {
+        let result = run_with_panic_protection::<(), _>(|| {
             panic!("simulated NIF panic");
         });
         let err = result.unwrap_err();
@@ -609,22 +692,89 @@ mod tests {
     #[test]
     fn panic_protection_passes_through_ok() {
         let result = run_with_panic_protection(|| {
-            Ok(NativeResponse {
-                status: 200,
-                url: "https://example.com".to_string(),
-                headers: vec![],
-                body_base64: "".to_string(),
-            })
+            Ok((
+                NativeResponseMeta {
+                    status: 200,
+                    url: "https://example.com".to_string(),
+                    headers: vec![],
+                },
+                Vec::<u8>::new(),
+            ))
         });
-        assert_eq!(result.unwrap().status, 200);
+        let (meta, body) = result.unwrap();
+        assert_eq!(meta.status, 200);
+        assert!(body.is_empty());
     }
 
     #[test]
     fn panic_protection_passes_through_err() {
-        let result = run_with_panic_protection(|| {
+        let result = run_with_panic_protection::<(), _>(|| {
             Err(NativeError::new("transport_error", "timeout", json!({})))
         });
         let err = result.unwrap_err();
         assert_eq!(err.type_name, "transport_error");
+    }
+
+    // --- Cookie domain safety tests ---
+
+    #[test]
+    fn psl_rejects_public_suffix_domain() {
+        assert!(!is_cookie_domain_safe(b"evil=1; Domain=com", "example.com"));
+        assert!(!is_cookie_domain_safe(
+            b"evil=1; Domain=co.uk",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn psl_rejects_cross_origin_domain() {
+        assert!(!is_cookie_domain_safe(b"x=1; Domain=other.com", "evil.com"));
+    }
+
+    #[test]
+    fn psl_accepts_valid_parent_domain() {
+        assert!(is_cookie_domain_safe(
+            b"x=1; Domain=example.com",
+            "sub.example.com"
+        ));
+    }
+
+    #[test]
+    fn psl_accepts_exact_host_domain() {
+        assert!(is_cookie_domain_safe(
+            b"x=1; Domain=example.com",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn psl_accepts_host_only_cookie() {
+        assert!(is_cookie_domain_safe(b"session=abc; Path=/", "example.com"));
+    }
+
+    #[test]
+    fn psl_rejects_non_label_boundary_match() {
+        assert!(!is_cookie_domain_safe(
+            b"x=1; Domain=example.com",
+            "notexample.com"
+        ));
+    }
+
+    #[test]
+    fn extract_cookie_domain_parses_correctly() {
+        assert_eq!(
+            extract_cookie_domain("session=abc; Domain=.example.com; Path=/"),
+            Some(".example.com")
+        );
+        assert_eq!(extract_cookie_domain("session=abc; Path=/"), None);
+        assert_eq!(
+            extract_cookie_domain("session=abc; path=/; domain=test.com; secure"),
+            Some("test.com")
+        );
+    }
+
+    #[test]
+    fn psl_rejects_non_utf8_header() {
+        assert!(!is_cookie_domain_safe(&[0xff, 0xfe], "example.com"));
     }
 }

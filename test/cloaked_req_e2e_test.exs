@@ -138,4 +138,31 @@ defmodule CloakedReq.E2ETest do
     assert resp.status == 200
     assert resp.body == binary_body
   end
+
+  test "redirect from server A to server B returns final response" do
+    # Server B (destination) returns 200
+    final_response = TestServer.build_response(200, [{"content-type", "text/plain"}], "arrived")
+    {dest_url, _dest_server} = TestServer.start(response: final_response)
+
+    # Server A returns 302 redirect to server B
+    redirect_response = TestServer.build_response(302, [{"location", dest_url}], "")
+    {origin_url, _origin_server} = TestServer.start(response: redirect_response)
+
+    req = [url: origin_url, retry: false] |> Req.new() |> CloakedReq.attach()
+
+    assert {:ok, %Req.Response{} = resp} = Req.request(req)
+    assert resp.status == 200
+    assert resp.body == "arrived"
+  end
+
+  test "response includes url in private metadata" do
+    response = TestServer.build_response(200, [{"content-type", "text/plain"}], "ok")
+    {url, _server} = TestServer.start(response: response)
+
+    req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach()
+
+    assert {:ok, %Req.Response{} = resp} = Req.request(req)
+    assert is_binary(resp.private[:cloaked_req_url])
+    assert resp.private[:cloaked_req_url] =~ "127.0.0.1"
+  end
 end

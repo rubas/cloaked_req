@@ -18,6 +18,9 @@ impl NativeError {
         }
     }
 
+    /// Serializes as JSON string. Used as fallback when SerdeTerm encoding is unavailable
+    /// (e.g. panic recovery path where we can't access the NIF Env).
+    #[allow(dead_code)]
     pub fn encode(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| {
             json!({

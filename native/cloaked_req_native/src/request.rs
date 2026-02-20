@@ -1,17 +1,16 @@
+use rustler::NifMap;
 use serde::Deserialize;
 
 fn default_timeout_ms() -> u64 {
     30_000
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, NifMap)]
 pub struct NativeRequest {
     pub method: String,
     pub url: String,
     #[serde(default)]
-    pub headers: Vec<[String; 2]>,
-    #[serde(default)]
-    pub body_base64: Option<String>,
+    pub headers: Vec<(String, String)>,
     #[serde(default = "default_timeout_ms")]
     pub receive_timeout_ms: u64,
     #[serde(default)]
@@ -39,7 +38,6 @@ mod tests {
         assert_eq!(request.method, "GET");
         assert_eq!(request.url, "https://example.com");
         assert!(request.headers.is_empty());
-        assert!(request.body_base64.is_none());
         assert_eq!(request.receive_timeout_ms, 30_000);
         assert!(request.emulation.is_none());
         assert!(!request.insecure_skip_verify);
@@ -53,7 +51,6 @@ mod tests {
               "method": "POST",
               "url": "https://example.com/path",
               "headers": [["x-demo", "1"], ["content-type", "application/json"]],
-              "body_base64": "eyJvayI6dHJ1ZX0=",
               "receive_timeout_ms": 5000,
               "emulation": "chrome_136",
               "insecure_skip_verify": true,
@@ -65,7 +62,6 @@ mod tests {
         assert_eq!(request.method, "POST");
         assert_eq!(request.url, "https://example.com/path");
         assert_eq!(request.headers.len(), 2);
-        assert_eq!(request.body_base64.as_deref(), Some("eyJvayI6dHJ1ZX0="));
         assert_eq!(request.receive_timeout_ms, 5_000);
         assert_eq!(request.emulation.as_deref(), Some("chrome_136"));
         assert!(request.insecure_skip_verify);

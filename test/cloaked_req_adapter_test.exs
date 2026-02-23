@@ -299,6 +299,79 @@ defmodule CloakedReq.AdapterTest do
   end
 
   # -------------------------------------------------------------------
+  # local_address option validation
+  # -------------------------------------------------------------------
+
+  test "IPv4 tuple is normalized to string" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: {192, 168, 1, 1})
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:local_address] == "192.168.1.1"
+  end
+
+  test "IPv6 tuple is normalized to string" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: {0, 0, 0, 0, 0, 0, 0, 1})
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:local_address] == "::1"
+  end
+
+  test "local_address string is passed through" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: "10.0.0.1")
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:local_address] == "10.0.0.1"
+  end
+
+  test "nil local_address produces nil in payload" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:local_address] == nil
+  end
+
+  test "invalid local_address string returns error" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: "not-an-ip")
+
+    assert {:error, %Error{type: :invalid_request, message: "local_address is not a valid IP address"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "invalid local_address tuple returns error" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: {999, 0, 0, 1})
+
+    assert {:error, %Error{type: :invalid_request}} = Request.to_native_payload(request)
+  end
+
+  test "non-tuple/non-string local_address returns error" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: 12_345)
+
+    assert {:error, %Error{type: :invalid_request, message: "local_address must be an IP address string or tuple"}} =
+             Request.to_native_payload(request)
+  end
+
+  # -------------------------------------------------------------------
   # Cookie jar option validation
   # -------------------------------------------------------------------
 

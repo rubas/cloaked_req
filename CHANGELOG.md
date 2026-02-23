@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [0.3.0] - 24.02.2026
+
+### Added
+
+- `:local_address` option for outbound source IP binding (IPv4/IPv6 tuples and strings).
+- Local address is included in the client cache key to prevent IP leakage through connection pooling.
+
 ## [0.2.0] - 23.02.2026
 
 ### Changed

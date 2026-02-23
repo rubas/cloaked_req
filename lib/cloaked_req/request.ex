@@ -29,7 +29,9 @@ defmodule CloakedReq.Request do
          {:ok, receive_timeout} <-
            normalize_receive_timeout(Req.Request.get_option(request, :receive_timeout, 15_000)),
          {:ok, insecure_skip_verify} <-
-           normalize_insecure_skip_verify(Req.Request.get_option(request, :insecure_skip_verify, false)) do
+           normalize_insecure_skip_verify(Req.Request.get_option(request, :insecure_skip_verify, false)),
+         {:ok, local_address} <-
+           normalize_local_address(Req.Request.get_option(request, :local_address)) do
       {:ok,
        {%{
           method: request.method |> Atom.to_string() |> String.upcase(),
@@ -38,7 +40,8 @@ defmodule CloakedReq.Request do
           receive_timeout_ms: receive_timeout,
           emulation: emulation,
           insecure_skip_verify: insecure_skip_verify,
-          max_body_size_bytes: max_body_size
+          max_body_size_bytes: max_body_size,
+          local_address: local_address
         }, body}}
     end
   end
@@ -116,5 +119,38 @@ defmodule CloakedReq.Request do
 
   defp normalize_insecure_skip_verify(_value) do
     {:error, Error.new(:invalid_request, "insecure_skip_verify must be a boolean")}
+  end
+
+  @spec normalize_local_address(term()) :: {:ok, nil | String.t()} | {:error, Error.t()}
+  defp normalize_local_address(nil), do: {:ok, nil}
+
+  defp normalize_local_address({a, b, c, d} = addr)
+       when is_integer(a) and is_integer(b) and is_integer(c) and is_integer(d) do
+    ntoa_to_string(addr)
+  end
+
+  defp normalize_local_address({a, b, c, d, e, f, g, h} = addr)
+       when is_integer(a) and is_integer(b) and is_integer(c) and is_integer(d) and is_integer(e) and is_integer(f) and
+              is_integer(g) and is_integer(h) do
+    ntoa_to_string(addr)
+  end
+
+  defp normalize_local_address(value) when is_binary(value) do
+    case :inet.parse_address(String.to_charlist(value)) do
+      {:ok, _addr} -> {:ok, value}
+      {:error, _} -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}
+    end
+  end
+
+  defp normalize_local_address(_value) do
+    {:error, Error.new(:invalid_request, "local_address must be an IP address string or tuple")}
+  end
+
+  @spec ntoa_to_string(:inet.ip_address()) :: {:ok, String.t()} | {:error, Error.t()}
+  defp ntoa_to_string(addr) do
+    case :inet.ntoa(addr) do
+      {:error, _} -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}
+      charlist -> {:ok, List.to_string(charlist)}
+    end
   end
 end

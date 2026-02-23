@@ -155,6 +155,22 @@ defmodule CloakedReq.E2ETest do
     assert resp.body == "arrived"
   end
 
+  test "local_address option binds to specified source IP" do
+    response = TestServer.build_response(200, [{"content-type", "text/plain"}], "bound")
+    {url, server} = TestServer.start(response: response)
+
+    req =
+      [url: url, retry: false]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: {127, 0, 0, 1})
+
+    assert {:ok, %Req.Response{} = resp} = Req.request(req)
+    assert resp.status == 200
+
+    peer_ip = TestServer.get_peer_address(server)
+    assert peer_ip == {127, 0, 0, 1}
+  end
+
   test "response includes url in private metadata" do
     response = TestServer.build_response(200, [{"content-type", "text/plain"}], "ok")
     {url, _server} = TestServer.start(response: response)

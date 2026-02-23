@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [0.2.0] - 23.02.2026
+
+### Changed
+
+- Upgraded NIF version to 2.17.
+
+### Fixed
+
+- Release workflow now creates GitHub releases on `workflow_dispatch` runs.
+- Release tarball naming aligned with rustler_precompiled expectations.
+
 ## [0.1.0] - 20.02.2026
 
 ### Added

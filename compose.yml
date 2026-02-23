@@ -1,0 +1,293 @@
+# Elixir/Phoenix development container with AI tools
+# Copy to your project as compose.yml
+
+networks:
+  default:
+    external: true
+    name: core_gateway
+  internal:
+    # Project-private network for db isolation
+
+volumes:
+  minio_data:
+
+services:
+  dev:
+    build:
+      context: .
+      args:
+        HOST_USER: ${HOST_USER}
+        HOST_UID: ${HOST_UID}
+        HOST_HOME: ${HOST_HOME}
+        GH_TOKEN: ${GH_TOKEN}
+      dockerfile_inline: |
+        FROM harbor.rubas.dev/dockerhub-proxy/ubuntu:noble
+
+        # Build args for host user matching
+        ARG HOST_USER
+        ARG HOST_UID
+        ARG HOST_HOME
+        ARG GH_TOKEN
+
+        # Install curl and gpg first (needed for adding repositories)
+        RUN apt-get update && apt-get install -y curl gpg && rm -rf /var/lib/apt/lists/*
+
+        # System dependencies
+        RUN mkdir -p /etc/apt/keyrings && \
+            curl -fsSL https://raw.githubusercontent.com/eza-community/eza/main/deb.asc | gpg --dearmor -o /etc/apt/keyrings/eza.gpg && \
+            echo "deb [signed-by=/etc/apt/keyrings/eza.gpg] http://deb.gierens.de stable main" > /etc/apt/sources.list.d/eza.list
+
+        # Add Node.js 24 repository (NodeSource)
+        RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+
+        RUN apt-get update && apt-get install -y \
+            bubblewrap git openssh-client tmux sudo jq unzip ripgrep fd-find bat eza ffmpeg imagemagick pandoc \
+            inotify-tools postgresql-client autoconf build-essential \
+            libncurses5-dev libssl-dev libwxgtk3.2-dev libgl1-mesa-dev libpng-dev \
+            nodejs \
+          && rm -rf /var/lib/apt/lists/* \
+          && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+          && ln -s /usr/bin/batcat /usr/local/bin/bat
+
+        # Create user matching host (handle existing ubuntu user with same UID)
+        RUN userdel -r ubuntu 2>/dev/null || true && \
+            groupdel ubuntu 2>/dev/null || true && \
+            groupadd -g ${HOST_UID} ${HOST_USER} 2>/dev/null || groupmod -n ${HOST_USER} $(getent group ${HOST_UID} | cut -d: -f1) && \
+            useradd -m -u ${HOST_UID} -g ${HOST_UID} -d ${HOST_HOME} -s /bin/bash ${HOST_USER} && \
+            echo "${HOST_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${HOST_USER}
+
+        # Keep npm globals and cache inside the container (avoid root-owned ~/.npm on the host).
+        RUN mkdir -p /opt/npm-global /var/cache/npm && \
+            chown -R ${HOST_UID}:${HOST_UID} /opt/npm-global /var/cache/npm
+
+        # Install mise + Erlang + Elixir as host user
+        USER ${HOST_USER}
+        WORKDIR ${HOST_HOME}
+        ENV HOME=${HOST_HOME}
+        ENV NPM_CONFIG_PREFIX=/opt/npm-global
+        ENV NPM_CONFIG_CACHE=/var/cache/npm
+        ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+        ENV PATH="/opt/npm-global/bin:$${PATH}"
+        RUN curl https://mise.run | sh
+        ENV PATH="$${HOST_HOME}/.local/bin:$${PATH}"
+        RUN mise use -g erlang@28.3 elixir@1.20.0-rc.1-otp-28
+        ENV PATH="$${HOST_HOME}/.bun/bin:$${HOST_HOME}/.local/share/mise/shims:$${PATH}"
+        RUN curl -fsSL https://bun.com/install | bash
+
+        # Elixir tools
+        ENV MIX_HOME=${HOST_HOME}/.mix
+        ENV HEX_HOME=${HOST_HOME}/.hex
+        RUN mix local.hex --force && mix local.rebar --force
+
+        # ElixirLS language server
+        RUN curl -fsSL https://github.com/elixir-lsp/elixir-ls/releases/download/v0.30.0/elixir-ls-v0.30.0.zip -o /tmp/elixir-ls.zip && \
+            unzip /tmp/elixir-ls.zip -d ${HOST_HOME}/.elixir-ls && \
+            chmod +x ${HOST_HOME}/.elixir-ls/language_server.sh && \
+            rm /tmp/elixir-ls.zip
+        RUN mix hex.repo add fluxon https://repo.fluxonui.com --fetch-public-key "SHA256:zF8zWamOWgokeJdiIYgRl91ZBmQYnyXlxIOp3ralbos" --auth-key "6pjxqbM9uWayh9AGW8vGtGt5clckttEE"
+
+        # CLI tools as root
+        USER root
+        RUN ln -s ${HOST_HOME}/.elixir-ls/language_server.sh /usr/local/bin/elixir-ls && \
+            ln -s ${HOST_HOME}/.bun/bin/bun /usr/local/bin/bun
+        # Install go-task, jj (latest), difft (latest), and gh
+        RUN sh -c "$$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin && \
+            ARCH=$$(dpkg --print-architecture) && \
+            JJ_VERSION=$$(curl -sL -H "Authorization: token ${GH_TOKEN}" https://api.github.com/repos/jj-vcs/jj/releases/latest | jq -r .tag_name) && \
+            case $$ARCH in amd64) JJ_ARCH="x86_64-unknown-linux-musl";; arm64) JJ_ARCH="aarch64-unknown-linux-musl";; esac && \
+            curl -fsSL "https://github.com/jj-vcs/jj/releases/download/$$JJ_VERSION/jj-$$JJ_VERSION-$$JJ_ARCH.tar.gz" | tar xz -C /usr/local/bin && \
+            DIFFT_VERSION=$$(curl -sL -H "Authorization: token ${GH_TOKEN}" https://api.github.com/repos/Wilfred/difftastic/releases/latest | jq -r .tag_name) && \
+            case $$ARCH in amd64) DIFFT_ARCH="x86_64-unknown-linux-gnu";; arm64) DIFFT_ARCH="aarch64-unknown-linux-gnu";; esac && \
+            curl -fsSL "https://github.com/Wilfred/difftastic/releases/download/$$DIFFT_VERSION/difft-$$DIFFT_ARCH.tar.gz" | tar xz -C /usr/local/bin && \
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && \
+            apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
+
+        # Infisical CLI
+        RUN curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | bash && \
+            apt-get update && apt-get install -y infisical && rm -rf /var/lib/apt/lists/*
+
+        # npm globals as host user (installed into container-local prefix)
+        USER ${HOST_USER}
+        RUN npm install -g @playwright/test tsx @google/gemini-cli @openai/codex @tailwindcss/language-server svgo lighthouse oxlint fingerprint-generator@2.1.79 fingerprint-injector@2.1.79
+
+        # Claude Code + Kimi for host user
+        USER root
+        RUN mkdir -p ${HOST_HOME}/.cache ${HOST_HOME}/.local ${HOST_HOME}/.kimi && chown -R ${HOST_USER}:${HOST_USER} ${HOST_HOME}
+        USER ${HOST_USER}
+        RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+        ENV PATH="$${HOST_HOME}/.local/bin:$${PATH}"
+        RUN curl -fsSL https://claude.ai/install.sh | bash && \
+            curl -LsSf https://code.kimi.com/install.sh | bash
+
+        # Shell config
+        USER root
+        RUN echo 'set -g mouse on' >> /etc/tmux.conf && \
+            echo 'set -g history-limit 50000' >> /etc/tmux.conf && \
+            echo 'alias ls="eza -lh --group-directories-first --icons=auto"' >> /etc/bash.bashrc && \
+            echo 'alias lsa="eza -lah --group-directories-first --icons=auto"' >> /etc/bash.bashrc && \
+            echo 'alias lt="eza --tree --level=2 --long --icons --git"' >> /etc/bash.bashrc && \
+            echo 'alias lta="eza --tree --level=2 --long --icons --git -a"' >> /etc/bash.bashrc && \
+            echo 'alias ..="cd .."' >> /etc/bash.bashrc
+
+    user: ${HOST_USER}
+    env_file:
+      - path: .env
+        required: false
+    security_opt:
+      - apparmor:unconfined
+      - seccomp:unconfined
+    volumes:
+      - .:${HOST_PWD}
+      - ${HOME}/.claude:${HOME}/.claude
+      - ${HOME}/.claude.json:${HOME}/.claude.json
+      - ${HOME}/.gemini:${HOME}/.gemini
+      - ${HOME}/.codex:${HOME}/.codex
+      - ${HOME}/.agents:${HOME}/.agents:ro
+      - ${HOME}/.local/bin:${HOME}/.local/host-bin:ro
+      - ${HOME}/.ssh:${HOME}/.ssh:ro
+      - ${HOME}/.1password/agent.sock:${HOME}/.1password/agent.sock
+      - /opt/1Password/op-ssh-sign:/opt/1Password/op-ssh-sign:ro
+      - ${HOME}/.config/git:${HOME}/.config/git
+      - ${HOME}/.config/gh:${HOME}/.config/gh:ro
+      - ${HOME}/.config/jj:${HOME}/.config/jj
+      - ${HOME}/.kimi:${HOME}/.kimi:ro
+    working_dir: ${HOST_PWD}
+    stdin_open: true
+    tty: true
+    environment:
+      - HOME=${HOME}
+      - PATH=/opt/npm-global/bin:${HOME}/.bun/bin:${HOME}/.local/share/mise/shims:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin:${HOME}/.local/host-bin
+      - SSH_AUTH_SOCK=${HOME}/.1password/agent.sock
+      - DOMAIN=${DOMAIN}
+      - PROJECT=${PROJECT}
+      - GH_TOKEN=${GH_TOKEN}
+      - LANG=C.UTF-8
+      - ELIXIR_ERL_OPTIONS=+fnu
+      - MIX_ENV=dev
+      - PHX_HOST=${DOMAIN}
+      - PORT=4000
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_DATABASE=${DB_DATABASE}
+      - DATABASE_URL=ecto://${DB_USER}:${DB_PASSWORD}@${DB_HOST}/${DB_DATABASE}
+      - SECRET_KEY_BASE=dev_secret_key_base_64_chars_long_for_development_use_only_not_for_prod
+      - DB_IMPORT=${DB_IMPORT}
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_BUCKET=app-dev
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minio
+      - AWS_SECRET_ACCESS_KEY=minio123
+      - AWS_S3_FORCE_PATH_STYLE=true
+    command: >
+      bash -c "
+        mkdir -p .logs
+
+        # Update AI tools in background (non-blocking). No file logs; output goes to container logs.
+        (
+          echo \"[core] Updating AI tools...\" 1>&2
+          if (
+            set -e
+            npm install -g @openai/codex@latest
+            npm install -g @google/gemini-cli@latest
+            claude update
+            uv tool upgrade kimi-cli
+          ) 1>&2; then
+            echo \"[core] AI tools updated\" 1>&2
+          else
+            echo \"[core] AI tools update failed\" 1>&2
+          fi
+        ) &
+
+        mix deps.get && npm install
+
+        # Database setup (only if ecto is used)
+        if grep -q 'ecto' mix.exs 2>/dev/null; then
+          echo 'Waiting for database...'
+          for i in {1..60}; do
+            pg_isready -h $$DB_HOST -U $$DB_USER >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          if [ \"$$DB_IMPORT\" = \"true\" ]; then
+            # Import handled by db container init, just run migrations
+            mix ecto.migrate
+          else
+            # No import file - run full setup with seeds
+            mix ecto.setup || echo '[core] ecto.setup failed'
+          fi
+        fi
+
+        while true; do mix phx.server 2>&1 | tee .logs/phoenix.log; echo '[core] Phoenix exited, restarting in 2s...'; sleep 2; done
+      "
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${PROJECT}.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.${PROJECT}.entrypoints=websecure"
+      - "traefik.http.routers.${PROJECT}.tls.certresolver=cloudflare"
+      - "traefik.http.services.${PROJECT}.loadbalancer.server.port=4000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/up -o /dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+    extra_hosts:
+      - "${DOMAIN}:host-gateway"
+    networks:
+      - default # Traefik routing
+      - internal # DB access
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: harbor.rubas.dev/dockerhub-proxy/postgres:alpine
+    hostname: ${DB_HOST}
+    volumes:
+      - ..:/import:ro
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command: >
+      bash -c "
+        cat > /docker-entrypoint-initdb.d/10-init.sql << 'EOF'
+        CREATE EXTENSION IF NOT EXISTS citext;
+      EOF
+
+        if [ -f /import/database.sql ]; then
+          cp /import/database.sql /docker-entrypoint-initdb.d/20-import.sql
+        fi
+
+        docker-entrypoint.sh postgres
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "psql -U ${DB_USER} -d ${DB_DATABASE} -c 'SELECT 1' > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks:
+      - internal # Only on private network (isolated from other projects)
+
+  minio:
+    image: harbor.rubas.dev/dockerhub-proxy/minio/minio:latest
+    command: server /data --console-address ":9001"
+    profiles:
+      - minio
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/ready -o /dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks:
+      - internal

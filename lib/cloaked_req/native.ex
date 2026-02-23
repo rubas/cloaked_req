@@ -12,6 +12,7 @@ defmodule CloakedReq.Native do
     base_url: "https://github.com/rubas/cloaked_req/releases/download/v#{Mix.Project.config()[:version]}",
     version: Mix.Project.config()[:version],
     force_build: System.get_env("CLOAKED_REQ_BUILD") in ["1", "true"],
+    nif_versions: ["2.17"],
     targets: ~w(
       aarch64-apple-darwin
       aarch64-unknown-linux-gnu

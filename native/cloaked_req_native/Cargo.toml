@@ -19,7 +19,5 @@ psl = "2"
 wreq-util = { version = "3.0.0-rc.10", features = ["emulation-serde"] }
 
 [features]
-default = ["nif_version_2_15"]
-nif_version_2_15 = ["rustler/nif_version_2_15"]
-nif_version_2_16 = ["rustler/nif_version_2_16"]
+default = ["nif_version_2_17"]
 nif_version_2_17 = ["rustler/nif_version_2_17"]

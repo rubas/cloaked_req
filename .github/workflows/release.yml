@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 env:
-  NIF_VERSION: "2.15"
+  NIF_VERSION: "2.17"
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -95,9 +95,14 @@ jobs:
       - name: Create tarball
         shell: bash
         run: |
-          tar -czf "${{ matrix.lib_prefix }}cloaked_req_native-v${{ steps.version.outputs.version }}-nif-${{ env.NIF_VERSION }}-${{ matrix.target }}.${{ matrix.lib_ext }}.tar.gz" \
-            -C "native/cloaked_req_native/target/${{ matrix.target }}/release/" \
-            "${{ matrix.lib_prefix }}cloaked_req_native.${{ matrix.lib_ext }}"
+          SRC_DIR="native/cloaked_req_native/target/${{ matrix.target }}/release"
+          SRC_NAME="${{ matrix.lib_prefix }}cloaked_req_native.${{ matrix.lib_ext }}"
+          LIB_NAME="${{ matrix.lib_prefix }}cloaked_req_native-v${{ steps.version.outputs.version }}-nif-${{ env.NIF_VERSION }}-${{ matrix.target }}.${{ matrix.lib_ext }}"
+
+          # Rename to versioned name expected by rustler_precompiled
+          cp "${SRC_DIR}/${SRC_NAME}" "${SRC_DIR}/${LIB_NAME}"
+          tar -czf "${LIB_NAME}.tar.gz" -C "${SRC_DIR}" "${LIB_NAME}"
+          rm "${SRC_DIR}/${LIB_NAME}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

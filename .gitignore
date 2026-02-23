@@ -34,5 +34,8 @@ priv/native/
 .home/
 .dprint-cache/
 
+# Local dev
+compose.yml
+
 # Claude Code
 .claude/

@@ -13,6 +13,8 @@ defmodule CloakedReq.TestServer do
     pid =
       spawn_link(fn ->
         {:ok, socket} = :gen_tcp.accept(listen, 5_000)
+        {:ok, {peer_ip, _peer_port}} = :inet.peername(socket)
+        send(caller, {:test_server_peer, self(), peer_ip})
         request_data = read_request(socket)
         send(caller, {:test_server_request, self(), request_data})
 
@@ -32,6 +34,15 @@ defmodule CloakedReq.TestServer do
       {:test_server_request, ^pid, data} -> data
     after
       timeout -> raise "TestServer: timed out waiting for captured request"
+    end
+  end
+
+  @spec get_peer_address(pid(), timeout()) :: :inet.ip_address()
+  def get_peer_address(pid, timeout \\ 5_000) do
+    receive do
+      {:test_server_peer, ^pid, ip} -> ip
+    after
+      timeout -> raise "TestServer: timed out waiting for peer address"
     end
   end
 

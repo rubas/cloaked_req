@@ -31,8 +31,8 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("tokio runtime must initialize")
 });
 
-/// Cache key: (emulation profile, insecure_skip_verify).
-type ClientKey = (Option<String>, bool);
+/// Cache key: (emulation profile, insecure_skip_verify, local_address).
+type ClientKey = (Option<String>, bool, Option<String>);
 
 /// Persistent client pool. Clients are reused across NIF calls for connection
 /// pooling, TLS session resumption, and HTTP keep-alive.
@@ -50,8 +50,13 @@ struct CookieJarResource {
 fn get_or_build_client(
     emulation: Option<&str>,
     insecure_skip_verify: bool,
+    local_address: Option<&str>,
 ) -> Result<Client, NativeError> {
-    let key = (emulation.map(|s| s.to_string()), insecure_skip_verify);
+    let key = (
+        emulation.map(|s| s.to_string()),
+        insecure_skip_verify,
+        local_address.map(|s| s.to_string()),
+    );
 
     // Fast path: read lock
     {
@@ -82,6 +87,17 @@ fn get_or_build_client(
             })?;
 
         builder = builder.emulation(profile);
+    }
+
+    if let Some(addr_str) = local_address {
+        let addr: std::net::IpAddr = addr_str.parse().map_err(|_| {
+            NativeError::new(
+                "invalid_request",
+                "invalid local_address",
+                json!({"value": addr_str}),
+            )
+        })?;
+        builder = builder.local_address(addr);
     }
 
     if insecure_skip_verify {
@@ -196,7 +212,11 @@ fn execute_request(
     body: Option<Vec<u8>>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
 ) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
-    let client = get_or_build_client(request.emulation.as_deref(), request.insecure_skip_verify)?;
+    let client = get_or_build_client(
+        request.emulation.as_deref(),
+        request.insecure_skip_verify,
+        request.local_address.as_deref(),
+    )?;
 
     RUNTIME.block_on(async move {
         let method = Method::from_bytes(request.method.as_bytes()).map_err(|reason| {
@@ -403,6 +423,7 @@ mod tests {
             emulation: None,
             insecure_skip_verify: false,
             max_body_size_bytes: None,
+            local_address: None,
         }
     }
 
@@ -544,6 +565,7 @@ mod tests {
             emulation: Some("chrome_136".to_string()),
             insecure_skip_verify: false,
             max_body_size_bytes: None,
+            local_address: None,
         };
 
         let (meta, body) =
@@ -713,6 +735,43 @@ mod tests {
         });
         let err = result.unwrap_err();
         assert_eq!(err.type_name, "transport_error");
+    }
+
+    // --- local_address tests ---
+
+    #[test]
+    fn rejects_invalid_local_address() {
+        let mut request = base_request();
+        request.local_address = Some("not-an-ip".to_string());
+
+        let result = execute_request(request, None, None);
+        assert!(result.is_err());
+
+        let err = result.err().expect("expected error");
+        assert_eq!(err.type_name, "invalid_request");
+        assert_eq!(err.message, "invalid local_address");
+    }
+
+    #[test]
+    fn accepts_loopback_local_address() {
+        let response_body = "ok";
+        let raw_response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            response_body.len(),
+            response_body
+        )
+        .into_bytes();
+        let (url, _rx, server) = spawn_test_server(raw_response, 200);
+
+        let mut request = base_request();
+        request.url = url;
+        request.local_address = Some("127.0.0.1".to_string());
+
+        let (meta, body) = execute_request(request, None, None).expect("request should succeed");
+        server.join().expect("server thread must join");
+
+        assert_eq!(meta.status, 200);
+        assert_eq!(body, b"ok");
     }
 
     // --- Cookie domain safety tests ---

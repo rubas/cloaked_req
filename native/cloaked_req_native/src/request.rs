@@ -19,6 +19,8 @@ pub struct NativeRequest {
     pub insecure_skip_verify: bool,
     #[serde(default)]
     pub max_body_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub local_address: Option<String>,
 }
 
 #[cfg(test)]
@@ -42,6 +44,7 @@ mod tests {
         assert!(request.emulation.is_none());
         assert!(!request.insecure_skip_verify);
         assert!(request.max_body_size_bytes.is_none());
+        assert!(request.local_address.is_none());
     }
 
     #[test]
@@ -66,5 +69,34 @@ mod tests {
         assert_eq!(request.emulation.as_deref(), Some("chrome_136"));
         assert!(request.insecure_skip_verify);
         assert_eq!(request.max_body_size_bytes, Some(10_485_760));
+        assert!(request.local_address.is_none());
+    }
+
+    #[test]
+    fn deserializes_ipv4_local_address() {
+        let request: NativeRequest = serde_json::from_str(
+            r#"{
+              "method": "GET",
+              "url": "https://example.com",
+              "local_address": "192.168.1.1"
+            }"#,
+        )
+        .expect("request should deserialize");
+
+        assert_eq!(request.local_address.as_deref(), Some("192.168.1.1"));
+    }
+
+    #[test]
+    fn deserializes_ipv6_local_address() {
+        let request: NativeRequest = serde_json::from_str(
+            r#"{
+              "method": "GET",
+              "url": "https://example.com",
+              "local_address": "::1"
+            }"#,
+        )
+        .expect("request should deserialize");
+
+        assert_eq!(request.local_address.as_deref(), Some("::1"));
     }
 }

@@ -25,11 +25,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
+            runner: self-hosted
             lib_prefix: lib
             lib_ext: so
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04
+            runner: self-hosted
             lib_prefix: lib
             lib_ext: so
           - target: aarch64-apple-darwin
@@ -114,7 +114,7 @@ jobs:
   release:
     name: GitHub Release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/download-artifact@v4

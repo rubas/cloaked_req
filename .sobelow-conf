@@ -1,0 +1,6 @@
+[
+  verbose: true,
+  private: true,
+  exit: "low",
+  ignore: ["Config.Headers", "Config.HTTPS"]
+]

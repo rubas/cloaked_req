@@ -1,0 +1,51 @@
+name: Update NIF checksum
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-checksum:
+    name: Update checksum file
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION=$(grep '@version' mix.exs | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download SHA256SUMS from release
+        run: gh release download "${{ steps.version.outputs.tag }}" --pattern 'SHA256SUMS' --output SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate checksum file
+        run: |
+          FILE="checksum-Elixir.CloakedReq.Native.exs"
+          echo '%{' > "$FILE"
+          while read -r hash name; do
+            echo "  \"${name}\" => \"sha256:${hash}\"," >> "$FILE"
+          done < <(sort -k2 SHA256SUMS)
+          echo '}' >> "$FILE"
+          rm SHA256SUMS
+          echo "Generated $FILE:"
+          cat "$FILE"
+
+      - name: Commit and push checksum
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add checksum-Elixir.CloakedReq.Native.exs
+          git diff --cached --quiet && echo "No checksum changes" && exit 0
+          git commit -m "chore: update NIF checksum for v${{ steps.version.outputs.version }}"
+          git push

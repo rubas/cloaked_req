@@ -1,0 +1,138 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g., v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  NIF_VERSION: "2.17"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: NIF ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: self-hosted
+            lib_prefix: lib
+            lib_ext: so
+          - target: aarch64-unknown-linux-gnu
+            runner: self-hosted
+            lib_prefix: lib
+            lib_ext: so
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            lib_prefix: lib
+            lib_ext: dylib
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # --- Linux dependencies ---
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake perl libclang-dev
+
+      - name: Install aarch64-linux-gnu cross toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get install -y crossbuild-essential-arm64
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
+
+      # --- Build ---
+
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            native/cloaked_req_native/target
+          key: release-${{ matrix.target }}-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
+          restore-keys: release-${{ matrix.target }}-
+
+      - name: Build NIF
+        working-directory: native/cloaked_req_native
+        shell: bash
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # --- Package ---
+
+      - name: Create tarball
+        shell: bash
+        run: |
+          SRC_DIR="native/cloaked_req_native/target/${{ matrix.target }}/release"
+          SRC_NAME="${{ matrix.lib_prefix }}cloaked_req_native.${{ matrix.lib_ext }}"
+          LIB_NAME="${{ matrix.lib_prefix }}cloaked_req_native-v${{ steps.version.outputs.version }}-nif-${{ env.NIF_VERSION }}-${{ matrix.target }}.${{ matrix.lib_ext }}"
+
+          # Rename to versioned name expected by rustler_precompiled
+          cp "${SRC_DIR}/${SRC_NAME}" "${SRC_DIR}/${LIB_NAME}"
+          tar -czf "${LIB_NAME}.tar.gz" -C "${SRC_DIR}" "${LIB_NAME}"
+          rm "${SRC_DIR}/${LIB_NAME}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nif-${{ matrix.target }}
+          path: "*cloaked_req_native-*.tar.gz"
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: self-hosted
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nif-*
+          merge-multiple: true
+          path: artifacts/
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum *.tar.gz | tee SHA256SUMS
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
+          generate_release_notes: true

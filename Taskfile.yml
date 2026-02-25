@@ -1,0 +1,103 @@
+version: "3"
+
+env:
+  CLOAKED_REQ_BUILD: "true"
+
+tasks:
+  setup:
+    desc: Install dependencies
+    cmds:
+      - mix deps.get
+
+  fix:
+    desc: Auto-fix formatting and linting issues
+    deps: [fix:elixir]
+
+  fix:elixir:
+    deps: [compile]
+    cmds:
+      - mix format
+
+  test:
+    desc: Run all checks and tests
+    deps: [test:format, test:lint, test:types, test:unit, test:rust]
+
+  compile:
+    desc: Compile the project
+    run: once
+    cmds:
+      - MIX_ENV=test mix compile --warnings-as-errors
+
+  test:format:
+    deps: [test:format:elixir]
+
+  test:format:elixir:
+    deps: [compile]
+    cmds:
+      - MIX_ENV=test mix format --check-formatted --dry-run
+
+  test:lint:
+    deps: [test:lint:elixir]
+
+  test:lint:elixir:
+    deps: [compile]
+    cmds:
+      - MIX_ENV=test mix credo --strict
+
+  test:types:
+    deps: [compile]
+    cmds:
+      - MIX_ENV=test mix dialyzer
+
+  test:unit:
+    deps: [compile]
+    cmds:
+      - MIX_ENV=test mix test --color
+
+  test:rust:
+    cmds:
+      - cargo test --manifest-path native/cloaked_req_native/Cargo.toml
+
+  test:rust:external:
+    cmds:
+      - cargo test --manifest-path native/cloaked_req_native/Cargo.toml -- --ignored
+
+  test:external:
+    deps: [compile]
+    cmds:
+      - MIX_ENV=test mix test --include external --color
+      - task: test:rust:external
+
+  security:
+    desc: Run security audits
+    deps: [security:deps, security:code]
+
+  security:deps:
+    deps: [compile]
+    cmds:
+      - MIX_ENV=test mix deps.audit
+
+  security:code:
+    deps: [compile]
+    cmds:
+      - MIX_ENV=test mix sobelow --config --exit
+
+  upgrade:
+    desc: Upgrade all dependencies
+    deps: [upgrade:elixir]
+
+  sync:rules:
+    cmds:
+      - mix usage_rules.sync --yes
+
+  upgrade:elixir:
+    cmds:
+      - mix deps.update --all
+      - mix deps.get
+      - mix deps.compile
+      - task: sync:rules
+      - mix hex.outdated
+
+  check:
+    desc: Full quality gate
+    deps: [test, security]

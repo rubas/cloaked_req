@@ -81,7 +81,7 @@
           {Credo.Check.Refactor.FilterFilter, []},
           {Credo.Check.Refactor.FilterReject, []},
           {Credo.Check.Refactor.FunctionArity, []},
-          {Credo.Check.Refactor.IoPuts, []},
+          {Credo.Check.Refactor.IoPuts, [files: %{excluded: [~r"/priv/repo/seeds/"]}]},
           {Credo.Check.Refactor.LongQuoteBlocks, []},
           {Credo.Check.Refactor.MapJoin, []},
           {Credo.Check.Refactor.MapMap, []},

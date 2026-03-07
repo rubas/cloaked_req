@@ -180,4 +180,27 @@ defmodule CloakedReq.CookieJarTest do
     raw = TestServer.get_request(verify_server)
     assert raw =~ "redirect_token=abc"
   end
+
+  test "cookies set on redirect target host are stored for that host" do
+    jar = CookieJar.new()
+
+    dest_response =
+      TestServer.build_response(200, [{"set-cookie", "redirect_token=abc; Domain=127.0.0.1; Path=/"}], "arrived")
+
+    {dest_url, _dest_server} = TestServer.start(response: dest_response)
+
+    redirect_response = TestServer.build_response(302, [{"location", dest_url}], "")
+    {origin_url, _origin_server} = TestServer.start(response: redirect_response, host: "localhost")
+
+    req = [url: origin_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, %Req.Response{status: 200}} = Req.request(req)
+
+    verify_response = TestServer.build_response(200, [], "ok")
+    {verify_url, verify_server} = TestServer.start(response: verify_response)
+    req = [url: verify_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, _} = Req.request(req)
+
+    raw = TestServer.get_request(verify_server)
+    assert raw =~ "redirect_token=abc"
+  end
 end

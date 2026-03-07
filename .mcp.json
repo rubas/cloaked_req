@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codemogger": {
+      "command": "codemogger",
+      "args": ["--db", "/tmp/codemogger.db", "mcp"]
+    }
+  }
+}

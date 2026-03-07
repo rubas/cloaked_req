@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [0.3.1] - 07.03.2026
+
+### Fixed
+
+- Redirect cookies are now stored against the actual response host, so cookie jars behave correctly across host-changing redirects.
+- CI again tests the minimum advertised Elixir version (`~> 1.19`).
+
+### Changed
+
+- Releases are now tagged automatically when a version bump lands on `main`, and the release flow is documented in `RELEASE.md`.
+
 ## [0.3.0] - 24.02.2026
 
 ### Added

@@ -267,10 +267,11 @@ fn execute_request(
             )
         })?;
 
-        // Store cookies from response into jar (with PSL validation)
+        // Store cookies against the actual response URI so redirects use the
+        // final host for PSL validation and jar scoping.
         if let Some(ref jar) = cookie_jar {
-            if let Ok(parsed_uri) = request.url.parse::<http::Uri>() {
-                let host = parsed_uri.host().unwrap_or_default();
+            if let Ok(response_uri) = response.uri().to_string().parse::<http::Uri>() {
+                let host = response_uri.host().unwrap_or_default();
                 let set_cookies: Vec<_> = response
                     .headers()
                     .get_all("set-cookie")
@@ -279,7 +280,7 @@ fn execute_request(
                     .collect();
                 if !set_cookies.is_empty() {
                     let mut iter = set_cookies.into_iter();
-                    jar.jar.set_cookies(&mut iter, &parsed_uri);
+                    jar.jar.set_cookies(&mut iter, &response_uri);
                 }
             }
         }

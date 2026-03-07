@@ -5,6 +5,7 @@ defmodule CloakedReq.TestServer do
   def start(opts) when is_list(opts) do
     response = Keyword.fetch!(opts, :response)
     delay_ms = Keyword.get(opts, :delay_ms, 0)
+    host = Keyword.get(opts, :host, "127.0.0.1")
     caller = self()
 
     {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
@@ -25,7 +26,7 @@ defmodule CloakedReq.TestServer do
         :gen_tcp.close(listen)
       end)
 
-    {"http://127.0.0.1:#{port}/", pid}
+    {"http://#{host}:#{port}/", pid}
   end
 
   @spec get_request(pid(), timeout()) :: binary()

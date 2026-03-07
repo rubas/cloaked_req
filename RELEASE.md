@@ -1,7 +1,7 @@
 ---
 name: release
 description: |
-  Covers: Version bump workflow, GitHub tagging, release assets, checksum refresh, Hex publishing, and docs publishing.
+  Covers: Version bump workflow, GitHub tagging, release assets, checksum refresh, and Hex publishing.
   Consult when: Cutting a new cloaked_req release, bumping @version, or recovering a failed release.
   Not covered: Day-to-day development (see README.md), CI implementation details (see .github/workflows/*.yml).
 ---
@@ -11,7 +11,7 @@ description: |
 `cloaked_req` releases have two parts:
 
 1. GitHub release assets for the precompiled NIFs
-2. Hex publication for the Elixir package and docs
+2. Hex publication for the Elixir package, with docs published automatically
 
 ## Quick Reference
 
@@ -19,8 +19,7 @@ description: |
 | --- | --- | --- |
 | Bump `@version` in `mix.exs` | PR to `main` | Release candidate commit |
 | Merge version bump to `main` | `release.yml` | `vX.Y.Z` tag, GitHub release, and checksum commit |
-| Publish package | `mix hex.publish` | Hex package |
-| Publish docs | `mix hex.publish docs` | HexDocs docs |
+| Publish package | `mix hex.publish` | Hex package and HexDocs docs |
 
 ## Version Bump Rules
 
@@ -71,12 +70,12 @@ mix docs
 
 ```bash
 mix hex.publish
-mix hex.publish docs
 ```
 
 ## Gotchas
 
 - Do not publish to Hex before the GitHub release exists. `RustlerPrecompiled` loads assets from the GitHub release URL derived from `@version`.
 - Do not reuse versions. Hex versions are immutable.
+- `mix hex.publish` publishes documentation automatically. Use `mix hex.publish package` only if you intentionally want to skip docs.
 - If the version bump merged but the GitHub release failed, fix the release workflow first. Do not publish Hex against missing or partial NIF assets.
 - Do not publish from a tree that still has the previous version in `checksum-Elixir.CloakedReq.Native.exs`.

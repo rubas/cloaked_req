@@ -2,23 +2,82 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g., v0.1.0)"
+        description: "Tag to build and publish (e.g., v0.1.0)"
         required: true
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref_name || inputs.tag }}
+  cancel-in-progress: false
 
 env:
   NIF_VERSION: "2.17"
   CARGO_TERM_COLOR: always
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.resolve.outputs.should_release }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag_exists: ${{ steps.resolve.outputs.tag_exists }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release target
+        id: resolve
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+            VERSION="${TAG#v}"
+            SHOULD_RELEASE=true
+          else
+            VERSION="$(sed -n 's/^  @version "\([^"]*\)"$/\1/p' mix.exs | head -n1)"
+            PREVIOUS_VERSION="$(git show HEAD^:mix.exs 2>/dev/null | sed -n 's/^  @version "\([^"]*\)"$/\1/p' | head -n1)"
+
+            if [ -z "$VERSION" ]; then
+              echo "Failed to read current mix.exs version" >&2
+              exit 1
+            fi
+
+            TAG="v$VERSION"
+
+            if [ "$VERSION" = "$PREVIOUS_VERSION" ]; then
+              SHOULD_RELEASE=false
+            else
+              SHOULD_RELEASE=true
+            fi
+          fi
+
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            TAG_EXISTS=true
+          else
+            TAG_EXISTS=false
+          fi
+
+          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when version did not change
+        if: steps.resolve.outputs.should_release != 'true'
+        run: echo "mix.exs version unchanged; release skipped"
+
   build:
+    needs: detect
+    if: needs.detect.outputs.should_release == 'true'
     name: NIF ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -40,18 +99,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Resolve version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -98,7 +145,7 @@ jobs:
         run: |
           SRC_DIR="native/cloaked_req_native/target/${{ matrix.target }}/release"
           SRC_NAME="${{ matrix.lib_prefix }}cloaked_req_native.${{ matrix.lib_ext }}"
-          LIB_NAME="${{ matrix.lib_prefix }}cloaked_req_native-v${{ steps.version.outputs.version }}-nif-${{ env.NIF_VERSION }}-${{ matrix.target }}.${{ matrix.lib_ext }}"
+          LIB_NAME="${{ matrix.lib_prefix }}cloaked_req_native-v${{ needs.detect.outputs.version }}-nif-${{ env.NIF_VERSION }}-${{ matrix.target }}.${{ matrix.lib_ext }}"
 
           # Rename to versioned name expected by rustler_precompiled
           cp "${SRC_DIR}/${SRC_NAME}" "${SRC_DIR}/${LIB_NAME}"
@@ -112,12 +159,39 @@ jobs:
           path: "*cloaked_req_native-*.tar.gz"
           if-no-files-found: error
 
+  tag:
+    runs-on: ubuntu-latest
+    needs: detect
+    if: github.event_name == 'push' && needs.detect.outputs.should_release == 'true' && needs.detect.outputs.tag_exists != 'true'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push release tag
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git tag "$TAG"
+          git push origin "$TAG"
+
   release:
     name: GitHub Release
-    needs: build
+    needs:
+      - detect
+      - build
+      - tag
+    if: always() && needs.detect.outputs.should_release == 'true' && needs.build.result == 'success' && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
     runs-on: self-hosted
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
       - uses: actions/download-artifact@v4
         with:
           pattern: nif-*
@@ -134,8 +208,27 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.detect.outputs.tag }}
+          target_commitish: main
           files: |
             artifacts/*.tar.gz
             artifacts/SHA256SUMS
           generate_release_notes: true
+
+      - name: Generate checksum file
+        run: |
+          FILE="checksum-Elixir.CloakedReq.Native.exs"
+          echo '%{' > "$FILE"
+          while read -r hash name; do
+            echo "  \"${name}\" => \"sha256:${hash}\"," >> "$FILE"
+          done < <(sort -k2 artifacts/SHA256SUMS)
+          echo '}' >> "$FILE"
+
+      - name: Commit and push checksum
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add checksum-Elixir.CloakedReq.Native.exs
+          git diff --cached --quiet && echo "No checksum changes" && exit 0
+          git commit -m "chore: update NIF checksum for ${{ needs.detect.outputs.tag }}"
+          git push

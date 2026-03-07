@@ -18,9 +18,7 @@ description: |
 | Step | Trigger | Output |
 | --- | --- | --- |
 | Bump `@version` in `mix.exs` | PR to `main` | Release candidate commit |
-| Merge version bump to `main` | `tag-on-version-bump` | `vX.Y.Z` tag if version changed |
-| Tag pushed | `release.yml` | GitHub release with NIF tarballs |
-| Release published | `checksum.yml` | Updated `checksum-Elixir.CloakedReq.Native.exs` committed to `main` |
+| Merge version bump to `main` | `release.yml` | `vX.Y.Z` tag, GitHub release, and checksum commit |
 | Publish package | `mix hex.publish` | Hex package |
 | Publish docs | `mix hex.publish docs` | HexDocs docs |
 
@@ -35,11 +33,13 @@ description: |
 
 After the version-bump PR is merged to `main`:
 
-1. `.github/workflows/tag-on-version-bump.yml` compares the current `mix.exs` version with `HEAD^`.
-2. If the version changed and `vX.Y.Z` does not already exist, the workflow creates and pushes that tag.
-3. The tag triggers `.github/workflows/release.yml`.
-4. `release.yml` builds the precompiled NIF archives and publishes the GitHub release for `vX.Y.Z`.
-5. The published release triggers `.github/workflows/checksum.yml`, which updates `checksum-Elixir.CloakedReq.Native.exs` on `main`.
+1. `.github/workflows/release.yml` compares the current `mix.exs` version with `HEAD^`.
+2. If the version changed, the workflow ensures `vX.Y.Z` exists.
+3. The same workflow builds the precompiled NIF archives and publishes the GitHub release for `vX.Y.Z`.
+4. The same workflow rewrites `checksum-Elixir.CloakedReq.Native.exs` from the generated `SHA256SUMS`.
+5. The workflow commits the checksum update back to `main`.
+
+Use the workflow's manual dispatch only to re-run a release for the current version tag after fixing workflow issues.
 
 ## Exact Hex Release Steps
 

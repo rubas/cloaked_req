@@ -1,7 +1,7 @@
 defmodule CloakedReq.MixProject do
   use Mix.Project
 
-  @version "0.3.0"
+  @version "0.3.1"
 
   @spec project() :: keyword()
   def project do
@@ -30,7 +30,17 @@ defmodule CloakedReq.MixProject do
   defp usage_rules do
     [
       file: "AGENTS.md",
-      usage_rules: :all
+      usage_rules: [
+        # Inline: Phoenix rules essential for daily LiveView work
+        "phoenix:liveview",
+        "phoenix:elixir",
+        "phoenix:html",
+        # Link: remaining Phoenix sub-rules
+        {"phoenix:ecto", link: :markdown},
+        {"phoenix:phoenix", link: :markdown},
+        # Link: all other packages + their sub-rules
+        {~r/^(?!phoenix$).*/, link: :markdown}
+      ]
     ]
   end
 

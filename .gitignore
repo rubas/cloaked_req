@@ -37,5 +37,7 @@ priv/native/
 # Local dev
 compose.yml
 
+.codemogger
+
 # Claude Code
 .claude/

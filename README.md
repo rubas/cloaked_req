@@ -11,7 +11,7 @@ Keep Req ergonomics while swapping transport to Rust `wreq` for impersonation an
 ```elixir
 def deps do
   [
-    {:cloaked_req, "~> 0.3.0"}
+    {:cloaked_req, "~> 0.3.1"}
   ]
 end
 ```
@@ -43,9 +43,15 @@ request =
 | `:impersonate`          | atom                        | `nil`   | Browser profile (e.g. `:chrome_136`)         |
 | `:cookie_jar`           | `CookieJar.t()`             | `nil`   | Automatic cookie persistence across requests |
 | `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification            |
+| `:local_address`        | IP string or IP tuple       | `nil`   | Bind outbound requests to a specific source IP |
 | `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max response body size                       |
 
 Req's `:receive_timeout` (default 15s) is also respected.
+
+```elixir
+Req.new(url: "https://example.com")
+|> CloakedReq.attach(local_address: {127, 0, 0, 1})
+```
 
 ### Cookie Jar
 

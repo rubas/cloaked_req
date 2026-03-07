@@ -1,7 +1,7 @@
 defmodule CloakedReq.MixProject do
   use Mix.Project
 
-  @version "0.3.1"
+  @version "0.3.2"
 
   @spec project() :: keyword()
   def project do
@@ -65,10 +65,11 @@ defmodule CloakedReq.MixProject do
       licenses: ["LGPL-3.0-or-later"],
       links: %{
         "GitHub" => "https://github.com/rubas/cloaked_req",
+        "HexDocs" => "https://hexdocs.pm/cloaked_req",
         "wreq" => "https://docs.rs/wreq/latest/wreq/"
       },
       files:
-        ~w(lib native/cloaked_req_native/src native/cloaked_req_native/Cargo.toml native/cloaked_req_native/Cargo.lock checksum-*.exs mix.exs README.md CHANGELOG.md LICENSE*)
+        ~w(lib native/cloaked_req_native/src native/cloaked_req_native/Cargo.toml native/cloaked_req_native/Cargo.lock checksum-*.exs mix.exs README.md CHANGELOG.md usage-rules.md LICENSE*)
     ]
   end
 
@@ -78,13 +79,13 @@ defmodule CloakedReq.MixProject do
       {:req, "~> 0.5"},
       {:rustler, "~> 0.37.0", optional: true},
       {:rustler_precompiled, "~> 0.8"},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7.17", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
-      {:styler, "~> 1.9", only: [:dev, :test], runtime: false},
+      {:styler, "~> 1.11", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.38", only: :dev, runtime: false},
-      {:usage_rules, "~> 1.2", only: [:dev], runtime: false}
+      {:usage_rules, "~> 1.2.4", only: [:dev], runtime: false}
     ]
   end
 end

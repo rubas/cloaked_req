@@ -2,6 +2,8 @@
 
 `cloaked_req` is a Req adapter backed by Rust [`wreq`](https://docs.rs/wreq/latest/wreq/), focused on browser impersonation and performance.
 
+Docs: <https://hexdocs.pm/cloaked_req>
+
 ## Goal
 
 Keep Req ergonomics while swapping transport to Rust `wreq` for impersonation and fingerprint-sensitive requests.
@@ -11,7 +13,7 @@ Keep Req ergonomics while swapping transport to Rust `wreq` for impersonation an
 ```elixir
 def deps do
   [
-    {:cloaked_req, "~> 0.3.1"}
+    {:cloaked_req, "~> 0.3.2"}
   ]
 end
 ```

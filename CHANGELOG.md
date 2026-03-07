@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [0.3.2] - 07.03.2026
+
+### Added
+
+- Ship `usage-rules.md` with the Hex package so consumers and LLM tooling can discover the canonical adapter usage and options.
+
+### Changed
+
+- Add a `HexDocs` package link in Hex metadata and a docs link near the top of the README.
+- Update dev dependencies: `credo`, `styler`, and `usage_rules`.
+
 ## [0.3.1] - 07.03.2026
 
 ### Fixed

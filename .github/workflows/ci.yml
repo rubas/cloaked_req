@@ -5,12 +5,7 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+permissions: {}
 
 env:
   CLOAKED_REQ_BUILD: "true"
@@ -20,6 +15,11 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.user.login == github.repository_owner
     name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the repository
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-test-${{ matrix.otp }}-${{ matrix.elixir }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
@@ -33,11 +33,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install zizmor
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://github.com/zizmorcore/zizmor/releases/download/v1.25.2/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C "$HOME/.local/bin" zizmor
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake golang-go
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
 
@@ -90,3 +100,5 @@ jobs:
 
       - name: Elixir tests
         run: MIX_ENV=test mix test --color
+
+      - run: zizmor --offline --persona=pedantic .github/workflows

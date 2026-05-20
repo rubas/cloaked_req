@@ -58,6 +58,11 @@ tasks:
     cmds:
       - cargo test --manifest-path native/cloaked_req_native/Cargo.toml
 
+  test:zizmor:
+    desc: Lint GitHub Actions workflows for security issues
+    cmds:
+      - zizmor --offline --persona=pedantic .github/workflows
+
   test:rust:external:
     cmds:
       - cargo test --manifest-path native/cloaked_req_native/Cargo.toml -- --ignored

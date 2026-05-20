@@ -16,7 +16,10 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
 wreq = { version = "6.0.0-rc.28", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies"] }
 http = "1"
 psl = "2"
-wreq-util = { version = "3.0.0-rc.10", features = ["emulation-serde"] }
+wreq-util = { version = "3.0.0-rc.11", features = ["emulation-serde"] }
+
+[lints.rust]
+unsafe_code = "forbid"
 
 [features]
 default = ["nif_version_2_17"]

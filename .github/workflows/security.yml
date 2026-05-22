@@ -1,0 +1,61 @@
+name: Security Audit
+
+on:
+  schedule:
+    # Daily at 02:00 UTC to catch newly disclosed advisories in pinned deps.
+    - cron: "0 2 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "mix.exs"
+      - "mix.lock"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout source
+      issues: write # open an issue when the audit fails
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # v1.24.0
+        env:
+          INSTALL_DIR_FOR_OTP: ${{ runner.tool_cache }}/setup-beam/otp-29.0
+          INSTALL_DIR_FOR_ELIXIR: ${{ runner.tool_cache }}/setup-beam/elixir-1.20.0-rc.6
+        with:
+          elixir-version: "1.20.0-rc.6"
+          otp-version: "29.0"
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Audit dependencies
+        run: MIX_ENV=test mix deps.audit
+
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const date = new Date().toISOString().split('T')[0];
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Security Audit Failed - ${date}`,
+              body: `The daily dependency audit has failed. Please check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`,
+              labels: ['security', 'automated']
+            });

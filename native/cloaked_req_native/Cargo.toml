@@ -1,7 +1,7 @@
 [package]
 name = "cloaked_req_native"
-version = "0.3.2"
-edition = "2021"
+version = "0.4.0"
+edition = "2024"
 rust-version = "1.91"
 
 [lib]
@@ -9,7 +9,7 @@ name = "cloaked_req_native"
 crate-type = ["cdylib"]
 
 [dependencies]
-rustler = { version = "0.37.2", default-features = false, features = ["derive", "serde"] }
+rustler = { version = "0.37.4", default-features = false, features = ["derive", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }

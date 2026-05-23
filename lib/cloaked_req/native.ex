@@ -43,7 +43,26 @@ defmodule CloakedReq.Native do
   def perform_request(payload, body, cookie_jar_ref \\ nil)
 
   def perform_request(payload, body, cookie_jar_ref) when is_map(payload) do
-    case safe_nif_perform_request(payload, body, cookie_jar_ref) do
+    token = make_ref()
+
+    case safe_nif_perform_request(payload, body, token, cookie_jar_ref) do
+      :ok ->
+        receive do
+          {:cloaked_req_response, ^token, result} -> normalize_native_result(result)
+        end
+
+      other ->
+        normalize_native_result(other)
+    end
+  end
+
+  def perform_request(_payload, _body, _cookie_jar_ref) do
+    {:error, Error.new(:invalid_request, "native payload must be a map")}
+  end
+
+  @spec normalize_native_result(term()) :: {:ok, map(), binary()} | {:error, Error.t()}
+  defp normalize_native_result(result) do
+    case result do
       {:ok, meta, response_body} when is_map(meta) and is_binary(response_body) ->
         {:ok, meta, response_body}
 
@@ -53,16 +72,17 @@ defmodule CloakedReq.Native do
         {:error, Error.new(error_type, message, details)}
 
       other ->
-        {:error, Error.new(:native_error, "unexpected native response", %{response: inspect(other)})}
+        unexpected_native_response(other)
     end
   end
 
-  def perform_request(_payload, _body, _cookie_jar_ref) do
-    {:error, Error.new(:invalid_request, "native payload must be a map")}
+  @spec unexpected_native_response(term()) :: {:error, Error.t()}
+  defp unexpected_native_response(response) do
+    {:error, Error.new(:native_error, "unexpected native response", %{response: inspect(response)})}
   end
 
-  defp safe_nif_perform_request(payload, body, cookie_jar_ref) do
-    nif_perform_request(payload, body, cookie_jar_ref)
+  defp safe_nif_perform_request(payload, body, token, cookie_jar_ref) do
+    nif_perform_request(payload, body, token, cookie_jar_ref)
   rescue
     error in [ErlangError] ->
       {:error, %{"type" => "nif_panic", "message" => Exception.message(error), "details" => %{}}}
@@ -78,5 +98,5 @@ defmodule CloakedReq.Native do
   defp to_error_type(_), do: :native_error
 
   defp nif_create_cookie_jar, do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_perform_request(_payload, _body, _cookie_jar_ref), do: :erlang.nif_error(:nif_not_loaded)
+  defp nif_perform_request(_payload, _body, _token, _cookie_jar_ref), do: :erlang.nif_error(:nif_not_loaded)
 end

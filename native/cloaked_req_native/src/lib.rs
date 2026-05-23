@@ -3,17 +3,21 @@ mod request;
 mod response;
 
 use std::collections::HashMap;
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{LazyLock, RwLock};
+#[cfg(test)]
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::Duration;
 
 use error::NativeError;
 use request::{NativeProxyConfig, NativeRequest};
 use response::NativeResponseMeta;
+use rustler::env::SavedTerm;
 use rustler::serde::SerdeTerm;
 use rustler::types::binary::{Binary, NewBinary};
-use rustler::{Encoder, Env, ResourceArc, Term};
-use serde_json::{json, Value};
+use rustler::{Encoder, Env, LocalPid, Monitor, OwnedEnv, ResourceArc, Term};
+use serde_json::{Value, json};
+use tokio::task::AbortHandle;
 use wreq::cookie::{CookieStore, Cookies};
 use wreq::header::{HeaderMap, HeaderName, HeaderValue};
 use wreq::{Client, Method, Proxy};
@@ -21,10 +25,10 @@ use wreq_util::Emulation;
 
 rustler::atoms! {
     ok,
-    error
+    error,
+    cloaked_req_response
 }
 
-/// Shared tokio runtime for all NIF calls. Created once on first use.
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -32,7 +36,6 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("tokio runtime must initialize")
 });
 
-/// Cache key: (emulation profile, insecure_skip_verify, local_address, connect timeout, proxy).
 type ClientKey = (
     Option<String>,
     bool,
@@ -41,8 +44,6 @@ type ClientKey = (
     Option<NativeProxyConfig>,
 );
 
-/// Persistent client pool. Clients are reused across NIF calls for connection
-/// pooling, TLS session resumption, and HTTP keep-alive.
 static CLIENT_CACHE: LazyLock<RwLock<HashMap<ClientKey, Client>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
@@ -55,6 +56,74 @@ struct CookieJarResource {
 }
 
 impl rustler::Resource for CookieJarResource {}
+
+struct RequestCancellationResource {
+    abort_handle: Mutex<Option<AbortHandle>>,
+    cancelled: AtomicBool,
+}
+
+impl RequestCancellationResource {
+    fn new() -> Self {
+        Self {
+            abort_handle: Mutex::new(None),
+            cancelled: AtomicBool::new(false),
+        }
+    }
+
+    fn set_abort_handle(&self, handle: AbortHandle) {
+        if self.cancelled.load(Ordering::Relaxed) {
+            handle.abort();
+            return;
+        }
+
+        let mut abort_handle = self.abort_handle.lock().unwrap_or_else(|e| e.into_inner());
+
+        if self.cancelled.load(Ordering::Relaxed) {
+            handle.abort();
+        } else {
+            *abort_handle = Some(handle);
+        }
+    }
+
+    fn abort(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+
+        if let Some(handle) = self
+            .abort_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            handle.abort();
+        }
+    }
+}
+
+impl rustler::Resource for RequestCancellationResource {
+    const IMPLEMENTS_DOWN: bool = true;
+
+    fn down<'a>(&'a self, _env: Env<'a>, _pid: LocalPid, _monitor: Monitor) {
+        self.abort();
+    }
+}
+
+#[cfg(test)]
+fn run_with_panic_protection<T, F>(f: F) -> Result<T, NativeError>
+where
+    F: FnOnce() -> Result<T, NativeError>,
+{
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(result) => result,
+        Err(panic_info) => {
+            let message = panic_info
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            Err(NativeError::new("nif_panic", message, json!({})))
+        }
+    }
+}
 
 fn get_or_build_client(
     emulation: Option<&str>,
@@ -71,7 +140,6 @@ fn get_or_build_client(
         proxy.cloned(),
     );
 
-    // Fast path: read lock
     {
         let cache = CLIENT_CACHE.read().unwrap_or_else(|e| e.into_inner());
         if let Some(client) = cache.get(&key) {
@@ -79,7 +147,6 @@ fn get_or_build_client(
         }
     }
 
-    // Slow path: write lock, double-check
     let mut cache = CLIENT_CACHE.write().unwrap_or_else(|e| e.into_inner());
     if let Some(client) = cache.get(&key) {
         return Ok(client.clone());
@@ -170,23 +237,6 @@ fn build_proxy(proxy_config: &NativeProxyConfig) -> Result<Proxy, NativeError> {
     Ok(proxy)
 }
 
-fn run_with_panic_protection<T, F>(f: F) -> Result<T, NativeError>
-where
-    F: FnOnce() -> Result<T, NativeError>,
-{
-    match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(result) => result,
-        Err(panic_info) => {
-            let message = panic_info
-                .downcast_ref::<String>()
-                .map(|s| s.as_str())
-                .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown panic");
-            Err(NativeError::new("nif_panic", message, json!({})))
-        }
-    }
-}
-
 /// Creates a new empty cookie jar.
 #[rustler::nif]
 fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
@@ -195,19 +245,64 @@ fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
     })
 }
 
-/// NIF entry point. Receives a native Elixir map (decoded via NifMap) + optional raw body binary
-/// + optional cookie jar resource.
-/// Returns `{:ok, response_meta_map, body_binary}` or `{:error, error_map}`.
-#[rustler::nif(schedule = "DirtyIo")]
+#[rustler::nif]
 fn nif_perform_request<'a>(
     env: Env<'a>,
     request: NativeRequest,
     body: Option<Binary>,
+    token: Term<'a>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
 ) -> Term<'a> {
+    let caller = env.pid();
     let body_vec = body.map(|b| b.as_slice().to_vec());
-    let result = run_with_panic_protection(|| execute_request(request, body_vec, cookie_jar));
+    let token_env = OwnedEnv::new();
+    let saved_token = token_env.save(token);
+    let cancellation = ResourceArc::new(RequestCancellationResource::new());
+    let monitor = env.monitor(&cancellation, &caller);
 
+    RUNTIME.spawn(async move {
+        let request_handle =
+            tokio::spawn(async move { execute_request_async(request, body_vec, cookie_jar).await });
+
+        cancellation.set_abort_handle(request_handle.abort_handle());
+
+        let result = request_handle.await.unwrap_or_else(|join_error| {
+            let message = if join_error.is_panic() {
+                "request task panicked"
+            } else {
+                "request task was cancelled"
+            };
+
+            Err(NativeError::new("nif_panic", message, json!({})))
+        });
+
+        if let Some(monitor) = monitor {
+            token_env.demonitor(&cancellation, &monitor);
+        }
+
+        send_request_result(caller, token_env, saved_token, result);
+    });
+
+    ok().encode(env)
+}
+
+fn send_request_result(
+    caller: LocalPid,
+    mut token_env: OwnedEnv,
+    saved_token: SavedTerm,
+    result: Result<(NativeResponseMeta, Vec<u8>), NativeError>,
+) {
+    let _ = token_env.send_and_clear(&caller, |env| {
+        let token = saved_token.load(env);
+        let result_term = encode_request_result(env, result);
+        (cloaked_req_response(), token, result_term)
+    });
+}
+
+fn encode_request_result<'a>(
+    env: Env<'a>,
+    result: Result<(NativeResponseMeta, Vec<u8>), NativeError>,
+) -> Term<'a> {
     match result {
         Ok((meta, response_body)) => {
             let mut new_bin = NewBinary::new(env, response_body.len());
@@ -241,7 +336,6 @@ async fn read_body_with_limit(
     };
 
     while let Some(chunk) = response.chunk().await.map_err(|reason| {
-        // reason = Display (user-friendly message), debug = Debug (inner error chain for diagnostics)
         NativeError::new(
             "transport_error",
             "failed to read response body",
@@ -261,7 +355,7 @@ async fn read_body_with_limit(
     Ok(body)
 }
 
-fn execute_request(
+async fn execute_request_async(
     request: NativeRequest,
     body: Option<Vec<u8>>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
@@ -274,95 +368,100 @@ fn execute_request(
         request.proxy.as_ref(),
     )?;
 
-    RUNTIME.block_on(async move {
-        let method = Method::from_bytes(request.method.as_bytes()).map_err(|reason| {
-            NativeError::new(
-                "invalid_request",
-                "invalid HTTP method",
-                json!({"reason": reason.to_string(), "value": request.method}),
-            )
-        })?;
+    let method = Method::from_bytes(request.method.as_bytes()).map_err(|reason| {
+        NativeError::new(
+            "invalid_request",
+            "invalid HTTP method",
+            json!({"reason": reason.to_string(), "value": request.method}),
+        )
+    })?;
 
-        let mut builder = client
-            .request(method, request.url.as_str())
-            .timeout(Duration::from_millis(request.receive_timeout_ms));
+    let mut builder = client
+        .request(method, request.url.as_str())
+        .timeout(Duration::from_millis(request.receive_timeout_ms));
 
-        // Iterate by reference so request.url remains accessible for cookie jar
-        for (name, value) in &request.headers {
-            builder = builder.header(name.as_str(), value.as_str());
-        }
+    for (name, value) in &request.headers {
+        builder = builder.header(name.as_str(), value.as_str());
+    }
 
-        // Add cookies from jar before sending
-        if let Some(ref jar) = cookie_jar {
-            if let Ok(parsed_uri) = request.url.parse::<http::Uri>() {
-                match jar.jar.cookies(&parsed_uri) {
-                    Cookies::Compressed(val) => {
+    if let Some(ref jar) = cookie_jar {
+        if let Ok(parsed_uri) = request.url.parse::<http::Uri>() {
+            match jar.jar.cookies(&parsed_uri) {
+                Cookies::Compressed(val) => {
+                    builder = builder.header("cookie", val);
+                }
+                Cookies::Uncompressed(vals) => {
+                    for val in vals {
                         builder = builder.header("cookie", val);
                     }
-                    Cookies::Uncompressed(vals) => {
-                        for val in vals {
-                            builder = builder.header("cookie", val);
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
+    }
 
-        if let Some(body) = body {
-            builder = builder.body(body);
+    if let Some(body) = body {
+        builder = builder.body(body);
+    }
+
+    let mut response = builder.send().await.map_err(|reason| {
+        NativeError::new(
+            "transport_error",
+            "request execution failed",
+            json!({"reason": reason.to_string(), "debug": format!("{reason:?}")}),
+        )
+    })?;
+
+    // Store cookies against the actual response URI so redirects use the
+    // final host for PSL validation and jar scoping.
+    if let Some(ref jar) = cookie_jar {
+        if let Ok(response_uri) = response.uri().to_string().parse::<http::Uri>() {
+            let host = response_uri.host().unwrap_or_default();
+            let set_cookies: Vec<_> = response
+                .headers()
+                .get_all("set-cookie")
+                .iter()
+                .filter(|hv| is_cookie_domain_safe(hv.as_bytes(), host))
+                .collect();
+            if !set_cookies.is_empty() {
+                let mut iter = set_cookies.into_iter();
+                jar.jar.set_cookies(&mut iter, &response_uri);
+            }
         }
+    }
 
-        let mut response = builder.send().await.map_err(|reason| {
-            NativeError::new(
-                "transport_error",
-                "request execution failed",
-                json!({"reason": reason.to_string(), "debug": format!("{reason:?}")}),
+    let status = response.status().as_u16();
+    let url = response.uri().to_string();
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
             )
-        })?;
+        })
+        .collect::<Vec<_>>();
 
-        // Store cookies against the actual response URI so redirects use the
-        // final host for PSL validation and jar scoping.
-        if let Some(ref jar) = cookie_jar {
-            if let Ok(response_uri) = response.uri().to_string().parse::<http::Uri>() {
-                let host = response_uri.host().unwrap_or_default();
-                let set_cookies: Vec<_> = response
-                    .headers()
-                    .get_all("set-cookie")
-                    .iter()
-                    .filter(|hv| is_cookie_domain_safe(hv.as_bytes(), host))
-                    .collect();
-                if !set_cookies.is_empty() {
-                    let mut iter = set_cookies.into_iter();
-                    jar.jar.set_cookies(&mut iter, &response_uri);
-                }
-            }
-        }
+    let body_bytes = read_body_with_limit(&mut response, request.max_body_size_bytes).await?;
 
-        let status = response.status().as_u16();
-        let url = response.uri().to_string();
-        let headers = response
-            .headers()
-            .iter()
-            .map(|(name, value)| {
-                (
-                    name.to_string(),
-                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
-                )
-            })
-            .collect::<Vec<_>>();
+    Ok((
+        NativeResponseMeta {
+            status,
+            url,
+            headers,
+        },
+        body_bytes,
+    ))
+}
 
-        let body_bytes = read_body_with_limit(&mut response, request.max_body_size_bytes).await?;
-
-        Ok((
-            NativeResponseMeta {
-                status,
-                url,
-                headers,
-            },
-            body_bytes,
-        ))
-    })
+#[cfg(test)]
+fn execute_request(
+    request: NativeRequest,
+    body: Option<Vec<u8>>,
+    cookie_jar: Option<ResourceArc<CookieJarResource>>,
+) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
+    RUNTIME.block_on(execute_request_async(request, body, cookie_jar))
 }
 
 /// Validates that a `set-cookie` header's Domain attribute is safe to store.
@@ -414,6 +513,7 @@ fn extract_cookie_domain(header: &str) -> Option<&str> {
 
 fn on_load(env: Env, _info: Term) -> bool {
     env.register::<CookieJarResource>().is_ok()
+        && env.register::<RequestCancellationResource>().is_ok()
 }
 
 rustler::init!("Elixir.CloakedReq.Native", load = on_load);
@@ -531,11 +631,12 @@ mod tests {
 
         assert_eq!(meta.status, 200);
         assert_eq!(body, b"ok");
-        assert!(meta
-            .headers
-            .iter()
-            .any(|header| header.0.eq_ignore_ascii_case("content-type")
-                && header.1.contains("text/plain")));
+        assert!(
+            meta.headers
+                .iter()
+                .any(|header| header.0.eq_ignore_ascii_case("content-type")
+                    && header.1.contains("text/plain"))
+        );
 
         let raw_request = received_request
             .recv_timeout(StdDuration::from_secs(1))

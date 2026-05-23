@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+## [0.4.0] - 23.05.2026
+
+### Changed
+
+- Run native HTTP requests asynchronously on the shared Tokio runtime instead of blocking DirtyIo NIF calls, improving high-concurrency throughput.
+- Abort in-flight native requests when the BEAM caller exits before the response is delivered.
+
 ### Fixed
 
 - Respect Req `connect_options` for proxy configuration, proxy headers, and connect timeout in the native `wreq` adapter.

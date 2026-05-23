@@ -49,6 +49,28 @@ defmodule CloakedReq.AdapterTest do
     assert {"x-demo", "1"} in payload[:headers]
   end
 
+  test "req bridge maps supported connect_options into native payload" do
+    request =
+      [
+        url: "https://example.com",
+        connect_options: [
+          timeout: 1_000,
+          proxy: {:http, "127.0.0.1", 8888, []},
+          proxy_headers: [{"proxy-authorization", "Basic token"}]
+        ]
+      ]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:connect_timeout_ms] == 1_000
+
+    assert payload[:proxy] == %{
+             url: "http://127.0.0.1:8888",
+             headers: [{"proxy-authorization", "Basic token"}]
+           }
+  end
+
   test "req bridge rejects streaming into adapters" do
     request =
       [url: "https://example.com", into: fn _chunk, acc -> {:cont, acc} end]
@@ -156,6 +178,62 @@ defmodule CloakedReq.AdapterTest do
 
     assert {:error, %Error{type: :invalid_request, message: "receive_timeout must be a positive integer"}} =
              Request.to_native_payload(request)
+  end
+
+  test "unsupported connect_options return error" do
+    request =
+      [url: "https://example.com", connect_options: [protocols: [:http2]]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error,
+            %Error{
+              type: :invalid_request,
+              message: "unsupported connect_options for CloakedReq adapter: :protocols"
+            }} = Request.to_native_payload(request)
+  end
+
+  test "non-keyword connect_options return error" do
+    request =
+      [url: "https://example.com", connect_options: [:bad]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error, %Error{type: :invalid_request, message: "connect_options must be a keyword list"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "invalid connect_options timeout returns error" do
+    request =
+      [url: "https://example.com", connect_options: [timeout: :infinity]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error, %Error{type: :invalid_request, message: "connect_options timeout must be a positive integer"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "proxy_headers without proxy returns error" do
+    request =
+      [url: "https://example.com", connect_options: [proxy_headers: [{"proxy-authorization", "Basic token"}]]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error, %Error{type: :invalid_request, message: "connect_options proxy_headers require proxy"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "proxy options return error" do
+    request =
+      [url: "https://example.com", connect_options: [proxy: {:http, "127.0.0.1", 8888, timeout: 100}]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error,
+            %Error{
+              type: :invalid_request,
+              message: "connect_options proxy options are not supported by CloakedReq adapter"
+            }} = Request.to_native_payload(request)
   end
 
   # -------------------------------------------------------------------

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## Unreleased
+
+### Fixed
+
+- Respect Req `connect_options` for proxy configuration, proxy headers, and connect timeout in the native `wreq` adapter.
+- Reject unsupported `connect_options` with clear adapter errors instead of silently ignoring them.
+
 ## [0.3.2] - 07.03.2026
 
 ### Added

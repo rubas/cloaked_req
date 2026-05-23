@@ -2,14 +2,16 @@ defmodule CloakedReq.Request do
   @moduledoc """
   Converts a `Req.Request` into the metadata map and body expected by the Rust NIF.
 
-  Validates and normalizes all adapter options (impersonate, timeout, body size,
-  TLS verification). The metadata map is JSON-encoded by `CloakedReq.Native`
-  before passing to the NIF; the body is passed as a raw binary.
+  Validates and normalizes all adapter options (impersonate, timeouts, proxy,
+  body size, TLS verification). The metadata map is passed to `CloakedReq.Native`;
+  the body is passed as a raw binary.
   """
 
   alias CloakedReq.Error
 
   @default_max_body_size 10_485_760
+  @default_connect_timeout 30_000
+  @supported_connect_options MapSet.new([:timeout, :proxy, :proxy_headers])
 
   @doc """
   Builds a native payload tuple from a `Req.Request`.
@@ -28,6 +30,8 @@ defmodule CloakedReq.Request do
          {:ok, emulation} <- normalize_impersonate(Req.Request.get_option(request, :impersonate)),
          {:ok, receive_timeout} <-
            normalize_receive_timeout(Req.Request.get_option(request, :receive_timeout, 15_000)),
+         {:ok, connect_options} <-
+           normalize_connect_options(Req.Request.get_option(request, :connect_options, [])),
          {:ok, insecure_skip_verify} <-
            normalize_insecure_skip_verify(Req.Request.get_option(request, :insecure_skip_verify, false)),
          {:ok, local_address} <-
@@ -38,6 +42,8 @@ defmodule CloakedReq.Request do
           url: URI.to_string(request.url),
           headers: flat_headers,
           receive_timeout_ms: receive_timeout,
+          connect_timeout_ms: connect_options.timeout,
+          proxy: connect_options.proxy,
           emulation: emulation,
           insecure_skip_verify: insecure_skip_verify,
           max_body_size_bytes: max_body_size,
@@ -112,6 +118,104 @@ defmodule CloakedReq.Request do
 
   defp normalize_receive_timeout(_value) do
     {:error, Error.new(:invalid_request, "receive_timeout must be a positive integer")}
+  end
+
+  @spec normalize_connect_options(term()) ::
+          {:ok, %{timeout: pos_integer(), proxy: nil | map()}} | {:error, Error.t()}
+  defp normalize_connect_options(nil), do: {:ok, %{timeout: @default_connect_timeout, proxy: nil}}
+
+  defp normalize_connect_options(options) when is_list(options) do
+    if Keyword.keyword?(options) do
+      with :ok <- validate_connect_option_keys(options),
+           {:ok, timeout} <- normalize_connect_timeout(Keyword.get(options, :timeout, @default_connect_timeout)),
+           {:ok, proxy} <- normalize_proxy(Keyword.get(options, :proxy), Keyword.get(options, :proxy_headers, [])) do
+        {:ok, %{timeout: timeout, proxy: proxy}}
+      end
+    else
+      {:error, Error.new(:invalid_request, "connect_options must be a keyword list")}
+    end
+  end
+
+  defp normalize_connect_options(_value) do
+    {:error, Error.new(:invalid_request, "connect_options must be a keyword list")}
+  end
+
+  @spec validate_connect_option_keys(keyword()) :: :ok | {:error, Error.t()}
+  defp validate_connect_option_keys(options) do
+    unsupported =
+      options
+      |> Keyword.keys()
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(@supported_connect_options, &1))
+
+    case unsupported do
+      [] ->
+        :ok
+
+      keys ->
+        names = Enum.map_join(keys, ", ", &inspect/1)
+        {:error, Error.new(:invalid_request, "unsupported connect_options for CloakedReq adapter: #{names}")}
+    end
+  end
+
+  @spec normalize_connect_timeout(term()) :: {:ok, pos_integer()} | {:error, Error.t()}
+  defp normalize_connect_timeout(value) when is_integer(value) and value > 0, do: {:ok, value}
+
+  defp normalize_connect_timeout(_value) do
+    {:error, Error.new(:invalid_request, "connect_options timeout must be a positive integer")}
+  end
+
+  @spec normalize_proxy(term(), term()) :: {:ok, nil | map()} | {:error, Error.t()}
+  defp normalize_proxy(nil, []), do: {:ok, nil}
+
+  defp normalize_proxy(nil, _headers) do
+    {:error, Error.new(:invalid_request, "connect_options proxy_headers require proxy")}
+  end
+
+  defp normalize_proxy({scheme, host, port, []}, headers)
+       when scheme in [:http, :https] and is_binary(host) and is_integer(port) and port > 0 do
+    with {:ok, proxy_headers} <- normalize_proxy_headers(headers) do
+      {:ok,
+       %{
+         url: "#{scheme}://#{host}:#{port}",
+         headers: proxy_headers
+       }}
+    end
+  end
+
+  defp normalize_proxy({_scheme, _host, _port, _opts}, _headers) do
+    {:error, Error.new(:invalid_request, "connect_options proxy options are not supported by CloakedReq adapter")}
+  end
+
+  defp normalize_proxy(_value, _headers) do
+    {:error, Error.new(:invalid_request, "connect_options proxy must be {:http | :https, host, port, []}")}
+  end
+
+  @spec normalize_proxy_headers(term()) :: {:ok, [{String.t(), String.t()}]} | {:error, Error.t()}
+  defp normalize_proxy_headers(headers) when is_list(headers) do
+    result =
+      Enum.reduce_while(headers, {:ok, []}, fn
+        {name, value}, {:ok, acc} when is_binary(name) and is_binary(value) ->
+          {:cont, {:ok, [{name, value} | acc]}}
+
+        _header, _acc ->
+          {:halt, {:error, Error.new(:invalid_request, "connect_options proxy_headers must be binary header pairs")}}
+      end)
+
+    case result do
+      {:ok, normalized} -> {:ok, Enum.reverse(normalized)}
+      error -> error
+    end
+  end
+
+  defp normalize_proxy_headers(headers) when is_map(headers) do
+    headers
+    |> flatten_headers()
+    |> normalize_proxy_headers()
+  end
+
+  defp normalize_proxy_headers(_headers) do
+    {:error, Error.new(:invalid_request, "connect_options proxy_headers must be a list or map")}
   end
 
   @spec normalize_insecure_skip_verify(term()) :: {:ok, boolean()} | {:error, Error.t()}

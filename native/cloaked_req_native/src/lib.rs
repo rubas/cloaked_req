@@ -8,14 +8,15 @@ use std::sync::{LazyLock, RwLock};
 use std::time::Duration;
 
 use error::NativeError;
-use request::NativeRequest;
+use request::{NativeProxyConfig, NativeRequest};
 use response::NativeResponseMeta;
 use rustler::serde::SerdeTerm;
 use rustler::types::binary::{Binary, NewBinary};
 use rustler::{Encoder, Env, ResourceArc, Term};
 use serde_json::{json, Value};
 use wreq::cookie::{CookieStore, Cookies};
-use wreq::{Client, Method};
+use wreq::header::{HeaderMap, HeaderName, HeaderValue};
+use wreq::{Client, Method, Proxy};
 use wreq_util::Emulation;
 
 rustler::atoms! {
@@ -31,8 +32,14 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("tokio runtime must initialize")
 });
 
-/// Cache key: (emulation profile, insecure_skip_verify, local_address).
-type ClientKey = (Option<String>, bool, Option<String>);
+/// Cache key: (emulation profile, insecure_skip_verify, local_address, connect timeout, proxy).
+type ClientKey = (
+    Option<String>,
+    bool,
+    Option<String>,
+    u64,
+    Option<NativeProxyConfig>,
+);
 
 /// Persistent client pool. Clients are reused across NIF calls for connection
 /// pooling, TLS session resumption, and HTTP keep-alive.
@@ -53,11 +60,15 @@ fn get_or_build_client(
     emulation: Option<&str>,
     insecure_skip_verify: bool,
     local_address: Option<&str>,
+    connect_timeout_ms: u64,
+    proxy: Option<&NativeProxyConfig>,
 ) -> Result<Client, NativeError> {
     let key = (
         emulation.map(|s| s.to_string()),
         insecure_skip_verify,
         local_address.map(|s| s.to_string()),
+        connect_timeout_ms,
+        proxy.cloned(),
     );
 
     // Fast path: read lock
@@ -76,7 +87,7 @@ fn get_or_build_client(
 
     let mut builder = Client::builder()
         .pool_max_idle_per_host(20)
-        .connect_timeout(Duration::from_secs(10));
+        .connect_timeout(Duration::from_millis(connect_timeout_ms));
 
     if let Some(profile_name) = emulation {
         let profile: Emulation = serde_json::from_value(Value::String(profile_name.to_string()))
@@ -106,6 +117,10 @@ fn get_or_build_client(
         builder = builder.cert_verification(false);
     }
 
+    if let Some(proxy_config) = proxy {
+        builder = builder.proxy(build_proxy(proxy_config)?);
+    }
+
     let client = builder.build().map_err(|reason| {
         NativeError::new(
             "transport_error",
@@ -116,6 +131,43 @@ fn get_or_build_client(
 
     cache.insert(key, client.clone());
     Ok(client)
+}
+
+fn build_proxy(proxy_config: &NativeProxyConfig) -> Result<Proxy, NativeError> {
+    let mut proxy = Proxy::all(proxy_config.url.as_str()).map_err(|reason| {
+        NativeError::new(
+            "invalid_request",
+            "invalid proxy URL",
+            json!({"reason": reason.to_string(), "url": &proxy_config.url}),
+        )
+    })?;
+
+    if !proxy_config.headers.is_empty() {
+        let mut headers = HeaderMap::new();
+
+        for (name, value) in &proxy_config.headers {
+            let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|reason| {
+                NativeError::new(
+                    "invalid_request",
+                    "invalid proxy header name",
+                    json!({"reason": reason.to_string(), "name": name}),
+                )
+            })?;
+            let header_value = HeaderValue::from_str(value).map_err(|reason| {
+                NativeError::new(
+                    "invalid_request",
+                    "invalid proxy header value",
+                    json!({"reason": reason.to_string(), "name": name}),
+                )
+            })?;
+
+            headers.append(header_name, header_value);
+        }
+
+        proxy = proxy.custom_http_headers(headers);
+    }
+
+    Ok(proxy)
 }
 
 fn run_with_panic_protection<T, F>(f: F) -> Result<T, NativeError>
@@ -218,6 +270,8 @@ fn execute_request(
         request.emulation.as_deref(),
         request.insecure_skip_verify,
         request.local_address.as_deref(),
+        request.connect_timeout_ms,
+        request.proxy.as_ref(),
     )?;
 
     RUNTIME.block_on(async move {
@@ -422,6 +476,8 @@ mod tests {
             url: "http://example.com".to_string(),
             headers: vec![],
             receive_timeout_ms: 5_000,
+            connect_timeout_ms: 30_000,
+            proxy: None,
             emulation: None,
             insecure_skip_verify: false,
             max_body_size_bytes: None,
@@ -564,6 +620,8 @@ mod tests {
             url: "https://tlsinfo.me/json".to_string(),
             headers: vec![],
             receive_timeout_ms: 20_000,
+            connect_timeout_ms: 30_000,
+            proxy: None,
             emulation: Some("chrome_136".to_string()),
             insecure_skip_verify: false,
             max_body_size_bytes: None,

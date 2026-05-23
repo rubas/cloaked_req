@@ -5,6 +5,13 @@ fn default_timeout_ms() -> u64 {
     30_000
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Hash, NifMap, PartialEq)]
+pub struct NativeProxyConfig {
+    pub url: String,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+}
+
 #[derive(Debug, Deserialize, NifMap)]
 pub struct NativeRequest {
     pub method: String,
@@ -13,6 +20,10 @@ pub struct NativeRequest {
     pub headers: Vec<(String, String)>,
     #[serde(default = "default_timeout_ms")]
     pub receive_timeout_ms: u64,
+    #[serde(default = "default_timeout_ms")]
+    pub connect_timeout_ms: u64,
+    #[serde(default)]
+    pub proxy: Option<NativeProxyConfig>,
     #[serde(default)]
     pub emulation: Option<String>,
     #[serde(default)]
@@ -41,6 +52,8 @@ mod tests {
         assert_eq!(request.url, "https://example.com");
         assert!(request.headers.is_empty());
         assert_eq!(request.receive_timeout_ms, 30_000);
+        assert_eq!(request.connect_timeout_ms, 30_000);
+        assert!(request.proxy.is_none());
         assert!(request.emulation.is_none());
         assert!(!request.insecure_skip_verify);
         assert!(request.max_body_size_bytes.is_none());
@@ -55,6 +68,11 @@ mod tests {
               "url": "https://example.com/path",
               "headers": [["x-demo", "1"], ["content-type", "application/json"]],
               "receive_timeout_ms": 5000,
+              "connect_timeout_ms": 2000,
+              "proxy": {
+                "url": "http://127.0.0.1:8888",
+                "headers": [["proxy-authorization", "Basic abc"]]
+              },
               "emulation": "chrome_136",
               "insecure_skip_verify": true,
               "max_body_size_bytes": 10485760
@@ -66,6 +84,19 @@ mod tests {
         assert_eq!(request.url, "https://example.com/path");
         assert_eq!(request.headers.len(), 2);
         assert_eq!(request.receive_timeout_ms, 5_000);
+        assert_eq!(request.connect_timeout_ms, 2_000);
+        assert_eq!(
+            request.proxy.as_ref().map(|proxy| proxy.url.as_str()),
+            Some("http://127.0.0.1:8888")
+        );
+        assert_eq!(
+            request
+                .proxy
+                .as_ref()
+                .and_then(|proxy| proxy.headers.first())
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+            Some(("proxy-authorization", "Basic abc"))
+        );
         assert_eq!(request.emulation.as_deref(), Some("chrome_136"));
         assert!(request.insecure_skip_verify);
         assert_eq!(request.max_body_size_bytes, Some(10_485_760));

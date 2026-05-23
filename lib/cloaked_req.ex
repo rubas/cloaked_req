@@ -18,9 +18,10 @@ defmodule CloakedReq do
   @doc """
   Attaches `CloakedReq` adapter behavior to an existing `Req.Request`.
 
-  Supported custom adapter options:
+  Supported adapter-relevant options:
 
   - `:cookie_jar` - `%CloakedReq.CookieJar{}` for automatic cookie persistence
+  - `:connect_options` - Req transport options for `:timeout`, `:proxy`, and `:proxy_headers`
   - `:impersonate` - profile atom (e.g. `:chrome_136`, `:"safari_17.4.1"`)
   - `:insecure_skip_verify` - boolean
   - `:local_address` - outbound source IP as string, IPv4 tuple, or IPv6 tuple

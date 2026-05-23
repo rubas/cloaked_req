@@ -62,6 +62,15 @@ Pass these options to `CloakedReq.attach/2`:
 - `body`
 - `receive_timeout`
 
+`CloakedReq` also supports these Req `connect_options`:
+
+- `:timeout` - socket connect timeout in milliseconds
+- `:proxy` - `{:http | :https, host, port, []}`
+- `:proxy_headers` - proxy headers such as `proxy-authorization`
+
+Do not pass unsupported `connect_options` to `CloakedReq`. They fail with an
+adapter error instead of being silently ignored.
+
 ## Usage Notes
 
 - `CloakedReq` is a `Req` adapter, not a standalone HTTP client.

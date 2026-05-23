@@ -50,6 +50,29 @@ request =
 
 Req's `:receive_timeout` (default 15s) is also respected.
 
+### Req Connect Options
+
+`CloakedReq` respects these Req `:connect_options`:
+
+- `:timeout` - socket connect timeout in milliseconds, default 30s
+- `:proxy` - `{:http | :https, host, port, []}` proxy tuple
+- `:proxy_headers` - proxy headers, commonly used for proxy authentication
+
+Unsupported connection options fail with an adapter error instead of being silently ignored.
+
+```elixir
+Req.new(
+  url: "https://example.com",
+  connect_options: [
+    timeout: 5_000,
+    proxy: {:http, "proxy.example.com", 8888, []},
+    proxy_headers: [{"proxy-authorization", "Basic " <> Base.encode64("user:pass")}]
+  ]
+)
+|> CloakedReq.attach(impersonate: :chrome_136)
+|> Req.get!()
+```
+
 ```elixir
 Req.new(url: "https://example.com")
 |> CloakedReq.attach(local_address: {127, 0, 0, 1})

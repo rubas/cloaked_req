@@ -127,6 +127,32 @@ defmodule CloakedReq.E2ETest do
     assert error.error.type == :transport_error
   end
 
+  test "Req connect_options proxy and proxy_headers are used" do
+    proxy_response = TestServer.build_response(200, [{"content-type", "text/plain"}], "proxied")
+    {proxy_url, proxy_server} = TestServer.start(response: proxy_response)
+    proxy_uri = URI.parse(proxy_url)
+
+    req =
+      [
+        url: "http://example.invalid/proxied",
+        retry: false,
+        connect_options: [
+          proxy: {:http, proxy_uri.host, proxy_uri.port, []},
+          proxy_headers: [{"proxy-authorization", "Basic token"}]
+        ]
+      ]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:ok, %Req.Response{} = resp} = Req.request(req)
+    assert resp.status == 200
+    assert resp.body == "proxied"
+
+    raw = TestServer.get_request(proxy_server)
+    assert raw =~ ~r/^GET http:\/\/example\.invalid\/proxied HTTP\/1\.1/
+    assert raw =~ ~r/proxy-authorization:\s*Basic token/i
+  end
+
   test "binary non-UTF8 body is preserved through round-trip" do
     binary_body = <<0xFF, 0xFE, 0x00, 0x01, 0x80, 0xC0>> <> :crypto.strong_rand_bytes(122)
     response = TestServer.build_response(200, [{"content-type", "application/octet-stream"}], binary_body)

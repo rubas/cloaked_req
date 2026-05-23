@@ -164,7 +164,8 @@ jobs:
         run: |
           SRC_DIR="native/cloaked_req_native/target/${TARGET}/release"
           SRC_NAME="${LIB_PREFIX}cloaked_req_native.${LIB_EXT}"
-          LIB_NAME="${LIB_PREFIX}cloaked_req_native-v${VERSION}-nif-${NIF_VERSION}-${TARGET}.${LIB_EXT}"
+          # rustler_precompiled requests the .so suffix on every platform (incl. macOS), so publish as .so
+          LIB_NAME="${LIB_PREFIX}cloaked_req_native-v${VERSION}-nif-${NIF_VERSION}-${TARGET}.so"
 
           # Rename to versioned name expected by rustler_precompiled
           cp "${SRC_DIR}/${SRC_NAME}" "${SRC_DIR}/${LIB_NAME}"

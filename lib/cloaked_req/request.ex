@@ -7,6 +7,8 @@ defmodule CloakedReq.Request do
   the body is passed as a raw binary.
   """
 
+  import Req.Request, only: [get_option: 2, get_option: 3]
+
   alias CloakedReq.Error
 
   @default_max_body_size 10_485_760
@@ -25,17 +27,17 @@ defmodule CloakedReq.Request do
          :ok <- validate_url(request.url),
          flat_headers = flatten_headers(request.headers),
          {:ok, max_body_size} <-
-           normalize_max_body_size(Req.Request.get_option(request, :max_body_size, @default_max_body_size)),
+           normalize_max_body_size(get_option(request, :max_body_size, @default_max_body_size)),
          {:ok, body} <- normalize_body(request.body, max_body_size),
-         {:ok, emulation} <- normalize_impersonate(Req.Request.get_option(request, :impersonate)),
+         {:ok, emulation} <- normalize_impersonate(get_option(request, :impersonate)),
          {:ok, receive_timeout} <-
-           normalize_receive_timeout(Req.Request.get_option(request, :receive_timeout, 15_000)),
+           normalize_receive_timeout(get_option(request, :receive_timeout, 15_000)),
          {:ok, connect_options} <-
-           normalize_connect_options(Req.Request.get_option(request, :connect_options, [])),
+           normalize_connect_options(get_option(request, :connect_options, [])),
          {:ok, insecure_skip_verify} <-
-           normalize_insecure_skip_verify(Req.Request.get_option(request, :insecure_skip_verify, false)),
+           normalize_insecure_skip_verify(get_option(request, :insecure_skip_verify, false)),
          {:ok, local_address} <-
-           normalize_local_address(Req.Request.get_option(request, :local_address)) do
+           normalize_local_address(get_option(request, :local_address)) do
       {:ok,
        {%{
           method: request.method |> Atom.to_string() |> String.upcase(),

@@ -72,6 +72,8 @@ defmodule CloakedReq.MixProject do
       {:rustler, "~> 0.37.0", optional: true},
       {:rustler_precompiled, "~> 0.8"},
       {:credo, "~> 1.7.17", only: [:dev, :test], runtime: false},
+      {:ex_slop, "~> 0.4", only: [:dev, :test], runtime: false},
+      {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
       {:styler, "~> 1.11", only: [:dev, :test], runtime: false},

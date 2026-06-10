@@ -9,6 +9,8 @@ on:
     paths:
       - "mix.exs"
       - "mix.lock"
+      - "native/cloaked_req_native/Cargo.toml"
+      - "native/cloaked_req_native/Cargo.lock"
   workflow_dispatch:
 
 permissions: {}
@@ -43,19 +45,83 @@ jobs:
           mix local.rebar --force
           mix deps.get
 
-      - name: Audit dependencies
+      - name: Audit Hex dependencies
         run: MIX_ENV=test mix deps.audit
 
-      - name: Create issue on failure
+      - name: Install cargo-audit
+        if: ${{ !cancelled() }}
+        uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+        with:
+          tool: cargo-audit
+
+      - name: Audit Rust dependencies
+        # Runs even when the Hex audit failed so one run reports both
+        # ecosystems. The NIF crate carries the native surface; RustSec
+        # advisories against its Rust dependency tree must fail this workflow
+        # too.
+        if: ${{ !cancelled() }}
+        working-directory: native/cloaked_req_native
+        run: cargo audit
+
+      - name: Report audit failure
         if: failure()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const title = 'Security Audit Failed';
+            const labels = [
+              { name: 'security', color: 'd73a4a', description: 'Security-relevant' },
+              { name: 'automated', color: 'ededed', description: 'Created by automation' },
+            ];
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: label.name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                await github.rest.issues.createLabel({ owner, repo, ...label });
+              }
+            }
             const date = new Date().toISOString().split('T')[0];
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Security Audit Failed - ${date}`,
-              body: `The daily dependency audit has failed. Please check the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`,
-              labels: ['security', 'automated']
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `The security audit failed on ${date}. See the [workflow run](${runUrl}).`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: labels.map(label => label.name).join(','), per_page: 100,
             });
+            const existing = open.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: existing.number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner, repo,
+                title, body, labels: labels.map(label => label.name),
+              });
+            }
+
+      - name: Resolve audit issue on success
+        if: success()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const title = 'Security Audit Failed';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', per_page: 100,
+            });
+            for (const issue of open.filter(i => i.title === title)) {
+              await github.rest.issues.createComment({
+                owner, repo,
+                issue_number: issue.number,
+                body: `Security audit passed. Closing. See the [workflow run](${runUrl}).`,
+              });
+              await github.rest.issues.update({
+                owner, repo,
+                issue_number: issue.number, state: 'closed',
+              });
+            }

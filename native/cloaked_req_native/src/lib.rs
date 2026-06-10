@@ -10,6 +10,7 @@ use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::Duration;
 
 use error::NativeError;
+use futures_util::StreamExt;
 use request::{NativeProxyConfig, NativeRequest};
 use response::NativeResponseMeta;
 use rustler::env::SavedTerm;
@@ -21,7 +22,7 @@ use tokio::task::AbortHandle;
 use wreq::cookie::{CookieStore, Cookies};
 use wreq::header::{HeaderMap, HeaderName, HeaderValue};
 use wreq::{Client, Method, Proxy};
-use wreq_util::Emulation;
+use wreq_util::Profile;
 
 rustler::atoms! {
     ok,
@@ -157,7 +158,7 @@ fn get_or_build_client(
         .connect_timeout(Duration::from_millis(connect_timeout_ms));
 
     if let Some(profile_name) = emulation {
-        let profile: Emulation = serde_json::from_value(Value::String(profile_name.to_string()))
+        let profile: Profile = serde_json::from_value(Value::String(profile_name.to_string()))
             .map_err(|reason| {
                 NativeError::new(
                     "invalid_request",
@@ -181,7 +182,7 @@ fn get_or_build_client(
     }
 
     if insecure_skip_verify {
-        builder = builder.cert_verification(false);
+        builder = builder.tls_cert_verification(false);
     }
 
     if let Some(proxy_config) = proxy {
@@ -319,7 +320,7 @@ fn encode_request_result<'a>(
 }
 
 async fn read_body_with_limit(
-    response: &mut wreq::Response,
+    response: wreq::Response,
     max_size: Option<u64>,
 ) -> Result<Vec<u8>, NativeError> {
     let limit = max_size.unwrap_or(u64::MAX) as usize;
@@ -335,7 +336,9 @@ async fn read_body_with_limit(
         _ => Vec::new(),
     };
 
-    while let Some(chunk) = response.chunk().await.map_err(|reason| {
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await.transpose().map_err(|reason| {
         NativeError::new(
             "transport_error",
             "failed to read response body",
@@ -386,7 +389,7 @@ async fn execute_request_async(
 
     if let Some(ref jar) = cookie_jar {
         if let Ok(parsed_uri) = request.url.parse::<http::Uri>() {
-            match jar.jar.cookies(&parsed_uri) {
+            match jar.jar.cookies(&parsed_uri, http::Version::HTTP_11) {
                 Cookies::Compressed(val) => {
                     builder = builder.header("cookie", val);
                 }
@@ -404,7 +407,7 @@ async fn execute_request_async(
         builder = builder.body(body);
     }
 
-    let mut response = builder.send().await.map_err(|reason| {
+    let response = builder.send().await.map_err(|reason| {
         NativeError::new(
             "transport_error",
             "request execution failed",
@@ -443,7 +446,7 @@ async fn execute_request_async(
         })
         .collect::<Vec<_>>();
 
-    let body_bytes = read_body_with_limit(&mut response, request.max_body_size_bytes).await?;
+    let body_bytes = read_body_with_limit(response, request.max_body_size_bytes).await?;
 
     Ok((
         NativeResponseMeta {

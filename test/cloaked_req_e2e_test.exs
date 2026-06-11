@@ -38,6 +38,23 @@ defmodule CloakedReq.E2ETest do
     assert raw =~ "hello world"
   end
 
+  test "POST transmits a large refcounted body intact" do
+    # A body over 64 bytes is a refcounted BEAM binary, so the NIF saves it by
+    # reference and copies the bytes on the Tokio thread. Verify those bytes
+    # reach the server unchanged.
+    body = String.duplicate("cloaked-req-payload-", 6_000)
+    response = TestServer.build_response(200, [{"content-type", "text/plain"}], "ok")
+    {url, server} = TestServer.start(response: response)
+
+    req = [url: url, method: :post, body: body, retry: false] |> Req.new() |> CloakedReq.attach()
+
+    assert {:ok, %Req.Response{status: 200}} = Req.request(req)
+
+    raw = TestServer.get_request(server)
+    [_headers, received_body] = :binary.split(raw, "\r\n\r\n")
+    assert received_body == body
+  end
+
   test "custom request headers reach the server" do
     response = TestServer.build_response(200, [{"content-type", "text/plain"}], "ok")
     {url, server} = TestServer.start(response: response)

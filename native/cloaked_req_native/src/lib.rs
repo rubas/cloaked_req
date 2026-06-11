@@ -255,13 +255,28 @@ fn nif_perform_request<'a>(
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
 ) -> Term<'a> {
     let caller = env.pid();
-    let body_vec = body.map(|b| b.as_slice().to_vec());
     let token_env = OwnedEnv::new();
     let saved_token = token_env.save(token);
+    // Save the body term rather than copying its bytes here: for a refcounted
+    // binary `save` (enif_make_copy) only bumps the reference count, so the
+    // scheduler thread does O(1) work regardless of body size. The actual copy
+    // into an owned Vec happens on the Tokio thread below.
+    let saved_body = body.map(|b| token_env.save(b));
     let cancellation = ResourceArc::new(RequestCancellationResource::new());
     let monitor = env.monitor(&cancellation, &caller);
 
     RUNTIME.spawn(async move {
+        let body_vec = saved_body.map(|saved| {
+            token_env.run(|env| {
+                saved
+                    .load(env)
+                    .decode::<Binary>()
+                    .expect("request body was saved as a binary")
+                    .as_slice()
+                    .to_vec()
+            })
+        });
+
         let request_handle =
             tokio::spawn(async move { execute_request_async(request, body_vec, cookie_jar).await });
 

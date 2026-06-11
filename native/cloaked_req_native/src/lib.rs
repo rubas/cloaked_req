@@ -331,8 +331,15 @@ async fn read_body_with_limit(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<usize>().ok());
 
+    // The streaming loop below enforces the real limit, so the Content-Length
+    // header is only a sizing hint here. Clamp the hint: a hostile server
+    // claiming a huge Content-Length must not drive a giant Vec::with_capacity
+    // whose allocation failure aborts the whole BEAM VM. extend_from_slice
+    // still grows geometrically for genuinely large bodies.
+    const PREALLOC_CAP: usize = 64 * 1024;
+
     let mut body = match content_length {
-        Some(len) if len <= limit => Vec::with_capacity(len),
+        Some(len) if len <= limit => Vec::with_capacity(len.min(PREALLOC_CAP)),
         _ => Vec::new(),
     };
 
@@ -500,14 +507,19 @@ fn is_cookie_domain_safe(header_bytes: &[u8], request_host: &str) -> bool {
 }
 
 /// Extracts the Domain attribute value from a set-cookie header string.
+///
+/// Splits on the first `=` so a multibyte UTF-8 character cannot land on a
+/// non-char boundary and panic. An empty `Domain=` is treated as absent, which
+/// keeps the cookie host-only, matching the previous behavior.
 fn extract_cookie_domain(header: &str) -> Option<&str> {
     header
         .split(';')
         .skip(1) // skip name=value
         .find_map(|attr| {
-            let attr = attr.trim();
-            if attr.len() > 7 && attr[..7].eq_ignore_ascii_case("domain=") {
-                Some(attr[7..].trim())
+            let (key, value) = attr.split_once('=')?;
+            if key.trim().eq_ignore_ascii_case("domain") {
+                let value = value.trim();
+                (!value.is_empty()).then_some(value)
             } else {
                 None
             }
@@ -791,6 +803,30 @@ mod tests {
     }
 
     #[test]
+    fn huge_content_length_does_not_preallocate() {
+        // Content-Length above isize::MAX: an unclamped Vec::with_capacity(len)
+        // would panic ("capacity overflow") or, for in-range huge values, abort
+        // the process on allocation failure. The clamp keeps the hint at 64 KiB,
+        // so the request proceeds and fails cleanly on the truncated body
+        // instead of crashing.
+        let raw_response = b"HTTP/1.1 200 OK\r\ncontent-length: 10000000000000000000\r\nconnection: close\r\n\r\nok".to_vec();
+        let (url, _rx, server) = spawn_test_server(raw_response, 200);
+
+        let mut request = base_request();
+        request.url = url;
+        request.max_body_size_bytes = None; // :unlimited — guard is always true
+
+        let result = execute_request(request, None, None);
+        server.join().expect("server thread must join");
+
+        // No panic, no abort: the truncated body surfaces as a transport error.
+        let err = result
+            .err()
+            .expect("expected truncated-body error, not a crash");
+        assert_eq!(err.type_name, "transport_error");
+    }
+
+    #[test]
     fn handles_empty_response_body() {
         let raw_response =
             b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_vec();
@@ -999,5 +1035,31 @@ mod tests {
     #[test]
     fn psl_rejects_non_utf8_header() {
         assert!(!is_cookie_domain_safe(&[0xff, 0xfe], "example.com"));
+    }
+
+    #[test]
+    fn cookie_domain_handles_multibyte_attribute_boundary() {
+        // Valid UTF-8 with a multibyte char (ï = 0xc3 0xaf) straddling byte
+        // index 7 of an attribute. Slicing at a fixed byte index would panic;
+        // boundary-safe parsing must treat this as a host-only cookie.
+        let mut header = b"session=x; abcdef".to_vec();
+        header.extend_from_slice("ï".as_bytes());
+        header.extend_from_slice(b"=1");
+        assert!(std::str::from_utf8(&header).is_ok());
+        assert!(is_cookie_domain_safe(&header, "example.com"));
+    }
+
+    #[test]
+    fn extract_cookie_domain_ignores_empty_domain() {
+        // An empty Domain= keeps the cookie host-only (no Domain extracted).
+        assert_eq!(extract_cookie_domain("session=abc; Domain=; Path=/"), None);
+    }
+
+    #[test]
+    fn extract_cookie_domain_handles_multibyte_non_domain_attribute() {
+        assert_eq!(
+            extract_cookie_domain("session=abc; nï=1; Domain=test.com"),
+            Some("test.com")
+        );
     }
 }

@@ -6,6 +6,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+## [0.4.1] - 11.06.2026
+
+### Fixed
+
+- A malicious `Content-Length` response header can no longer abort the BEAM VM. The response buffer is no longer pre-allocated from the raw header value, which was only reachable under `max_body_size: :unlimited`.
+- A crafted `Set-Cookie` `Domain` attribute containing a multibyte character no longer fails cookie-jar requests; the attribute is now parsed on a character boundary.
+- A native request that never delivers a reply now returns a `:transport_error` after a deadline instead of blocking the calling process indefinitely.
+
+### Changed
+
+- The native client cache no longer grows without bound under proxy, source-IP, or connect-timeout rotation. Proxy and source IP are applied per request (wreq's connection pool already isolates connections by both), the remaining cache is LRU-bounded, and clients are built outside the cache lock.
+- Request bodies are copied on the Tokio worker thread instead of the calling BEAM scheduler, keeping scheduler work constant for any body size.
+
+### Documentation
+
+- Document that `max_body_size` caps both the request and the response body.
+- Update the install snippet to `~> 0.4.0` and regenerate the impersonation-profile list against `wreq-util 3.0.0-rc.12`.
+
 ## [0.4.0] - 23.05.2026
 
 ### Changed

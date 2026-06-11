@@ -50,7 +50,9 @@ Pass these options to `CloakedReq.attach/2`:
 - `:cookie_jar` - `%CloakedReq.CookieJar{}` for automatic cookie persistence
 - `:insecure_skip_verify` - boolean to disable TLS certificate verification
 - `:local_address` - outbound source IP as a string or IP tuple
-- `:max_body_size` - positive integer byte limit or `:unlimited`
+- `:max_body_size` - positive integer byte limit or `:unlimited`; caps both the
+  request body (rejected before sending) and the response body (truncated to an
+  error)
 
 ## Req Options Still Used
 

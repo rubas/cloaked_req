@@ -15,17 +15,18 @@ description: |
 
 ## Quick Reference
 
-| Step | Trigger | Output |
-| --- | --- | --- |
-| Bump `@version` in `mix.exs` | PR to `main` | Release candidate commit |
-| Merge version bump to `main` | `release.yml` | `vX.Y.Z` tag, GitHub release, and checksum commit |
-| Publish package | `mix hex.publish` | Hex package and HexDocs docs |
+| Step                         | Trigger           | Output                                            |
+| ---------------------------- | ----------------- | ------------------------------------------------- |
+| Bump `@version` in `mix.exs` | PR to `main`      | Release candidate commit                          |
+| Merge version bump to `main` | `release.yml`     | `vX.Y.Z` tag, GitHub release, and checksum commit |
+| Publish package              | `mix hex.publish` | Hex package and HexDocs docs                      |
 
 ## Version Bump Rules
 
 - Bump [mix.exs](mix.exs) `@version` only when that merge should create a release.
 - Update [CHANGELOG.md](CHANGELOG.md) in the same PR.
 - Keep [native/cloaked_req_native/Cargo.toml](native/cloaked_req_native/Cargo.toml) in sync with the release version when you want Rust metadata to match the Elixir package.
+- Keep [README.md](README.md) current: the install snippet's `~> X.Y` constraint must cover `@version`, and when `wreq-util` is bumped, refresh the version reference and the impersonation-profile list against the new `Profile` enum.
 - No version change means no tag and no GitHub release.
 
 ## Automated GitHub Release

@@ -25,7 +25,9 @@ defmodule CloakedReq do
   - `:impersonate` - profile atom (e.g. `:chrome_136`, `:"safari_17.4.1"`)
   - `:insecure_skip_verify` - boolean
   - `:local_address` - outbound source IP as string, IPv4 tuple, or IPv6 tuple
-  - `:max_body_size` - positive integer or `:unlimited` (default: 10 MB)
+  - `:max_body_size` - positive integer or `:unlimited` (default: 10 MB); caps
+    both the request body (rejected before sending if larger) and the response
+    body (truncated to an error once it exceeds the limit)
 
   ## Examples
 

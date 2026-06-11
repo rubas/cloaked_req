@@ -13,7 +13,7 @@ Keep Req ergonomics while swapping transport to Rust `wreq` for impersonation an
 ```elixir
 def deps do
   [
-    {:cloaked_req, "~> 0.3.2"}
+    {:cloaked_req, "~> 0.4.0"}
   ]
 end
 ```
@@ -40,15 +40,15 @@ request =
 
 ## Adapter Options
 
-| Option                  | Type                        | Default | Description                                  |
-| ----------------------- | --------------------------- | ------- | -------------------------------------------- |
-| `:impersonate`          | atom                        | `nil`   | Browser profile (e.g. `:chrome_136`)         |
-| `:cookie_jar`           | `CookieJar.t()`             | `nil`   | Automatic cookie persistence across requests |
-| `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification            |
+| Option                  | Type                        | Default | Description                                    |
+| ----------------------- | --------------------------- | ------- | ---------------------------------------------- |
+| `:impersonate`          | atom                        | `nil`   | Browser profile (e.g. `:chrome_136`)           |
+| `:cookie_jar`           | `CookieJar.t()`             | `nil`   | Automatic cookie persistence across requests   |
+| `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification              |
 | `:local_address`        | IP string or IP tuple       | `nil`   | Bind outbound requests to a specific source IP |
-| `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max response body size                       |
+| `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max request and response body size             |
 
-Req's `:receive_timeout` (default 15s) is also respected.
+`:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit. Req's `:receive_timeout` (default 15s) is also respected.
 
 ### Req Connect Options
 
@@ -98,31 +98,31 @@ Req.new(url: "https://example.com/dashboard")
 
 ## Impersonation Profiles
 
-Profiles based on `wreq-util 3.0.0-rc.10`.
+Profiles based on `wreq-util 3.0.0-rc.12`. Profile atoms with a dot must be quoted, e.g. `:"safari_17.4.1"`.
 
 ### Chrome
 
-`:chrome_100`, `:chrome_101`, `:chrome_104`, `:chrome_105`, `:chrome_106`, `:chrome_107`, `:chrome_108`, `:chrome_109`, `:chrome_110`, `:chrome_114`, `:chrome_116`, `:chrome_117`, `:chrome_118`, `:chrome_119`, `:chrome_120`, `:chrome_123`, `:chrome_124`, `:chrome_126`, `:chrome_127`, `:chrome_128`, `:chrome_129`, `:chrome_130`, `:chrome_131`, `:chrome_132`, `:chrome_133`, `:chrome_134`, `:chrome_135`, `:chrome_136`, `:chrome_137`, `:chrome_138`, `:chrome_139`, `:chrome_140`, `:chrome_141`, `:chrome_142`, `:chrome_143`, `:chrome_144`, `:chrome_145`
+`:chrome_100`, `:chrome_101`, `:chrome_104`, `:chrome_105`, `:chrome_106`, `:chrome_107`, `:chrome_108`, `:chrome_109`, `:chrome_110`, `:chrome_114`, `:chrome_116`, `:chrome_117`, `:chrome_118`, `:chrome_119`, `:chrome_120`, `:chrome_123`, `:chrome_124`, `:chrome_126`, `:chrome_127`, `:chrome_128`, `:chrome_129`, `:chrome_130`, `:chrome_131`, `:chrome_132`, `:chrome_133`, `:chrome_134`, `:chrome_135`, `:chrome_136`, `:chrome_137`, `:chrome_138`, `:chrome_139`, `:chrome_140`, `:chrome_141`, `:chrome_142`, `:chrome_143`, `:chrome_144`, `:chrome_145`, `:chrome_146`, `:chrome_147`, `:chrome_148`
 
 ### Edge
 
-`:edge_101`, `:edge_122`, `:edge_127`, `:edge_131`, `:edge_134`, `:edge_135`, `:edge_136`, `:edge_137`, `:edge_138`, `:edge_139`, `:edge_140`, `:edge_141`, `:edge_142`, `:edge_143`, `:edge_144`, `:edge_145`
+`:edge_101`, `:edge_122`, `:edge_127`, `:edge_131`, `:edge_134`, `:edge_135`, `:edge_136`, `:edge_137`, `:edge_138`, `:edge_139`, `:edge_140`, `:edge_141`, `:edge_142`, `:edge_143`, `:edge_144`, `:edge_145`, `:edge_146`, `:edge_147`, `:edge_148`
 
 ### Opera
 
-`:opera_116`, `:opera_117`, `:opera_118`, `:opera_119`
+`:opera_116`, `:opera_117`, `:opera_118`, `:opera_119`, `:opera_120`, `:opera_121`, `:opera_122`, `:opera_123`, `:opera_124`, `:opera_125`, `:opera_126`, `:opera_127`, `:opera_128`, `:opera_129`, `:opera_130`, `:opera_131`
 
 ### Firefox
 
-`:firefox_109`, `:firefox_117`, `:firefox_128`, `:firefox_133`, `:firefox_135`, `:firefox_private_135`, `:firefox_android_135`, `:firefox_136`, `:firefox_private_136`, `:firefox_139`, `:firefox_142`, `:firefox_143`, `:firefox_144`, `:firefox_145`, `:firefox_146`, `:firefox_147`
+`:firefox_109`, `:firefox_117`, `:firefox_128`, `:firefox_133`, `:firefox_135`, `:firefox_private_135`, `:firefox_android_135`, `:firefox_136`, `:firefox_private_136`, `:firefox_139`, `:firefox_142`, `:firefox_143`, `:firefox_144`, `:firefox_145`, `:firefox_146`, `:firefox_147`, `:firefox_148`, `:firefox_149`, `:firefox_150`, `:firefox_151`
 
 ### Safari
 
-`:safari_16`, `:safari_18`, `:safari_ipad_18`, `:safari_26`, `:safari_ipad_26`, `:safari_ios_26`
+`:"safari_15.3"`, `:"safari_15.5"`, `:"safari_15.6.1"`, `:safari_16`, `:"safari_16.5"`, `:"safari_17.0"`, `:"safari_17.2.1"`, `:"safari_17.4.1"`, `:"safari_17.5"`, `:"safari_17.6"`, `:safari_18`, `:"safari_18.2"`, `:"safari_18.3"`, `:"safari_18.3.1"`, `:"safari_18.5"`, `:safari_26`, `:"safari_26.1"`, `:"safari_26.2"`, `:"safari_26.3"`, `:"safari_26.4"`, `:safari_ipad_18`, `:"safari_ipad_26"`, `:"safari_ipad_26.2"`, `:"safari_ios_16.5"`, `:"safari_ios_17.2"`, `:"safari_ios_17.4.1"`, `:"safari_ios_18.1.1"`, `:safari_ios_26`, `:"safari_ios_26.2"`
 
 ### OkHttp
 
-`:okhttp_5`
+`:"okhttp_3.9"`, `:"okhttp_3.11"`, `:"okhttp_3.13"`, `:"okhttp_3.14"`, `:"okhttp_4.9"`, `:"okhttp_4.10"`, `:"okhttp_4.12"`, `:okhttp_5`
 
 ## Limitations
 

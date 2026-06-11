@@ -47,9 +47,7 @@ defmodule CloakedReq.Native do
 
     case safe_nif_perform_request(payload, body, token, cookie_jar_ref) do
       :ok ->
-        receive do
-          {:cloaked_req_response, ^token, result} -> normalize_native_result(result)
-        end
+        await_native_response(token, backstop_timeout(payload))
 
       other ->
         normalize_native_result(other)
@@ -58,6 +56,44 @@ defmodule CloakedReq.Native do
 
   def perform_request(_payload, _body, _cookie_jar_ref) do
     {:error, Error.new(:invalid_request, "native payload must be a map")}
+  end
+
+  # Waits for the native task's token-tagged reply, with a timeout backstop.
+  #
+  # The NIF returns `:ok` immediately and the result arrives later as a message.
+  # Caller liveness otherwise depends on the native side always sending that
+  # message; the `after` clause bounds the wait so a native task that dies
+  # without replying surfaces a `:transport_error` instead of hanging the caller
+  # forever. A late reply is drained so it cannot land in a calling GenServer as
+  # an unexpected `handle_info`. Public only so the backstop can be tested.
+  @doc false
+  @spec await_native_response(reference(), timeout()) :: {:ok, map(), binary()} | {:error, Error.t()}
+  def await_native_response(token, timeout_ms) do
+    receive do
+      {:cloaked_req_response, ^token, result} -> normalize_native_result(result)
+    after
+      timeout_ms ->
+        flush_native_response(token)
+
+        {:error,
+         Error.new(:transport_error, "native request produced no response within #{timeout_ms}ms", %{
+           timeout_ms: timeout_ms
+         })}
+    end
+  end
+
+  @spec backstop_timeout(map()) :: pos_integer()
+  defp backstop_timeout(payload) do
+    Map.fetch!(payload, :receive_timeout_ms) + Map.fetch!(payload, :connect_timeout_ms) + 5_000
+  end
+
+  @spec flush_native_response(reference()) :: :ok
+  defp flush_native_response(token) do
+    receive do
+      {:cloaked_req_response, ^token, _result} -> :ok
+    after
+      0 -> :ok
+    end
   end
 
   @spec normalize_native_result(term()) :: {:ok, map(), binary()} | {:error, Error.t()}

@@ -2,15 +2,16 @@ mod error;
 mod request;
 mod response;
 
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 #[cfg(test)]
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex, RwLock};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use error::NativeError;
 use futures_util::StreamExt;
+use lru::LruCache;
 use request::{NativeProxyConfig, NativeRequest};
 use response::NativeResponseMeta;
 use rustler::env::SavedTerm;
@@ -37,16 +38,19 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("tokio runtime must initialize")
 });
 
-type ClientKey = (
-    Option<String>,
-    bool,
-    Option<String>,
-    u64,
-    Option<NativeProxyConfig>,
-);
+/// Cache key for a built `Client`. Proxy and source IP are applied per request
+/// (wreq's connection pool keys on both, so connections are never shared across
+/// them), so they stay out of the key. What remains is bounded by an LRU because
+/// `connect_timeout_ms` is caller-controlled.
+type ClientKey = (Option<String>, bool, u64);
 
-static CLIENT_CACHE: LazyLock<RwLock<HashMap<ClientKey, Client>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+const CLIENT_CACHE_CAP: usize = 128;
+
+static CLIENT_CACHE: LazyLock<Mutex<LruCache<ClientKey, Client>>> = LazyLock::new(|| {
+    Mutex::new(LruCache::new(
+        NonZeroUsize::new(CLIENT_CACHE_CAP).expect("client cache capacity is non-zero"),
+    ))
+});
 
 /// Opaque cookie jar resource held by the BEAM.
 ///
@@ -129,30 +133,38 @@ where
 fn get_or_build_client(
     emulation: Option<&str>,
     insecure_skip_verify: bool,
-    local_address: Option<&str>,
     connect_timeout_ms: u64,
-    proxy: Option<&NativeProxyConfig>,
 ) -> Result<Client, NativeError> {
     let key = (
         emulation.map(|s| s.to_string()),
         insecure_skip_verify,
-        local_address.map(|s| s.to_string()),
         connect_timeout_ms,
-        proxy.cloned(),
     );
 
     {
-        let cache = CLIENT_CACHE.read().unwrap_or_else(|e| e.into_inner());
+        let mut cache = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(client) = cache.get(&key) {
             return Ok(client.clone());
         }
     }
 
-    let mut cache = CLIENT_CACHE.write().unwrap_or_else(|e| e.into_inner());
-    if let Some(client) = cache.get(&key) {
-        return Ok(client.clone());
-    }
+    // Build with no lock held so a slow Client::build() never blocks other
+    // cache users. A racing duplicate build is harmless: the loser is dropped.
+    let client = build_client(emulation, insecure_skip_verify, connect_timeout_ms)?;
 
+    let mut cache = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = cache.get(&key) {
+        return Ok(existing.clone());
+    }
+    cache.put(key, client.clone());
+    Ok(client)
+}
+
+fn build_client(
+    emulation: Option<&str>,
+    insecure_skip_verify: bool,
+    connect_timeout_ms: u64,
+) -> Result<Client, NativeError> {
     let mut builder = Client::builder()
         .pool_max_idle_per_host(20)
         .connect_timeout(Duration::from_millis(connect_timeout_ms));
@@ -170,35 +182,17 @@ fn get_or_build_client(
         builder = builder.emulation(profile);
     }
 
-    if let Some(addr_str) = local_address {
-        let addr: std::net::IpAddr = addr_str.parse().map_err(|_| {
-            NativeError::new(
-                "invalid_request",
-                "invalid local_address",
-                json!({"value": addr_str}),
-            )
-        })?;
-        builder = builder.local_address(addr);
-    }
-
     if insecure_skip_verify {
         builder = builder.tls_cert_verification(false);
     }
 
-    if let Some(proxy_config) = proxy {
-        builder = builder.proxy(build_proxy(proxy_config)?);
-    }
-
-    let client = builder.build().map_err(|reason| {
+    builder.build().map_err(|reason| {
         NativeError::new(
             "transport_error",
             "failed to build HTTP client",
             json!({"reason": reason.to_string(), "debug": format!("{reason:?}")}),
         )
-    })?;
-
-    cache.insert(key, client.clone());
-    Ok(client)
+    })
 }
 
 fn build_proxy(proxy_config: &NativeProxyConfig) -> Result<Proxy, NativeError> {
@@ -366,9 +360,7 @@ async fn execute_request_async(
     let client = get_or_build_client(
         request.emulation.as_deref(),
         request.insecure_skip_verify,
-        request.local_address.as_deref(),
         request.connect_timeout_ms,
-        request.proxy.as_ref(),
     )?;
 
     let method = Method::from_bytes(request.method.as_bytes()).map_err(|reason| {
@@ -382,6 +374,24 @@ async fn execute_request_async(
     let mut builder = client
         .request(method, request.url.as_str())
         .timeout(Duration::from_millis(request.receive_timeout_ms));
+
+    // Proxy and source IP are per-request: wreq's connection pool keys on both,
+    // so the shared client never reuses a connection across proxies or source
+    // IPs, and the client cache stays bounded under proxy/IP rotation.
+    if let Some(ref proxy_config) = request.proxy {
+        builder = builder.proxy(build_proxy(proxy_config)?);
+    }
+
+    if let Some(ref addr_str) = request.local_address {
+        let addr: std::net::IpAddr = addr_str.parse().map_err(|_| {
+            NativeError::new(
+                "invalid_request",
+                "invalid local_address",
+                json!({"value": addr_str}),
+            )
+        })?;
+        builder = builder.local_address(addr);
+    }
 
     for (name, value) in &request.headers {
         builder = builder.header(name.as_str(), value.as_str());
@@ -936,6 +946,27 @@ mod tests {
 
         assert_eq!(meta.status, 200);
         assert_eq!(body, b"ok");
+    }
+
+    // --- Client cache tests ---
+
+    #[test]
+    fn client_cache_is_bounded_under_distinct_keys() {
+        // connect_timeout_ms is caller-controlled and part of the key. Feed more
+        // distinct values than the cap and confirm the LRU never grows past it,
+        // so a malicious or accidental rotation cannot leak Clients forever.
+        for i in 0..(CLIENT_CACHE_CAP + 50) {
+            let _ = build_client(None, false, 900_000 + i as u64).map(|client| {
+                let mut cache = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+                cache.put((None, false, 900_000 + i as u64), client);
+            });
+        }
+
+        let len = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner()).len();
+        assert!(
+            len <= CLIENT_CACHE_CAP,
+            "cache grew to {len}, expected at most {CLIENT_CACHE_CAP}"
+        );
     }
 
     // --- Cookie domain safety tests ---

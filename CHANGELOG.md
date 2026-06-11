@@ -8,6 +8,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [0.4.1] - 11.06.2026
 
+### Added
+
+- Support Req 0.6: the version constraint is relaxed to `~> 0.5 or ~> 0.6`. Req 0.6's changes are confined to its request/response step pipeline (multipart escaping, decoder defaults, opt-in decompression), none of which touch the adapter contract; the full suite passes against Req 0.6.1.
+
 ### Fixed
 
 - A malicious `Content-Length` response header can no longer abort the BEAM VM. The response buffer is no longer pre-allocated from the raw header value, which was only reachable under `max_body_size: :unlimited`.
@@ -18,6 +22,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - The native client cache no longer grows without bound under proxy, source-IP, or connect-timeout rotation. Proxy and source IP are applied per request (wreq's connection pool already isolates connections by both), the remaining cache is LRU-bounded, and clients are built outside the cache lock.
 - Request bodies are copied on the Tokio worker thread instead of the calling BEAM scheduler, keeping scheduler work constant for any body size.
+- Update the Rust NIF to rustler 0.38 (a clean drop-in: no source or API changes, no new warnings).
 
 ### Documentation
 

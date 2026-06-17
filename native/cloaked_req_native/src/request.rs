@@ -34,9 +34,51 @@ pub struct NativeRequest {
     pub local_address: Option<String>,
 }
 
+#[derive(Debug, Deserialize, NifMap)]
+pub struct NativePoolConfig {
+    #[serde(default)]
+    pub emulation: Option<String>,
+    #[serde(default)]
+    pub insecure_skip_verify: bool,
+    #[serde(default = "default_timeout_ms")]
+    pub connect_timeout_ms: u64,
+    #[serde(default)]
+    pub pool_idle_timeout_ms: Option<u64>,
+}
+
 #[cfg(test)]
 mod tests {
+    use super::NativePoolConfig;
     use super::NativeRequest;
+
+    #[test]
+    fn deserializes_minimal_pool_config_with_defaults() {
+        let config: NativePoolConfig =
+            serde_json::from_str(r#"{}"#).expect("config should deserialize");
+
+        assert!(config.emulation.is_none());
+        assert!(!config.insecure_skip_verify);
+        assert_eq!(config.connect_timeout_ms, 30_000);
+        assert!(config.pool_idle_timeout_ms.is_none());
+    }
+
+    #[test]
+    fn deserializes_full_pool_config_shape() {
+        let config: NativePoolConfig = serde_json::from_str(
+            r#"{
+              "emulation": "chrome_136",
+              "insecure_skip_verify": true,
+              "connect_timeout_ms": 2000,
+              "pool_idle_timeout_ms": 5000
+            }"#,
+        )
+        .expect("config should deserialize");
+
+        assert_eq!(config.emulation.as_deref(), Some("chrome_136"));
+        assert!(config.insecure_skip_verify);
+        assert_eq!(config.connect_timeout_ms, 2_000);
+        assert_eq!(config.pool_idle_timeout_ms, Some(5_000));
+    }
 
     #[test]
     fn deserializes_minimal_request_with_defaults() {

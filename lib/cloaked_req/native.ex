@@ -32,20 +32,44 @@ defmodule CloakedReq.Native do
   end
 
   @doc """
+  Builds a Rust-side HTTP client with its own connection pool.
+
+  The config map is passed directly to the NIF (decoded via Rustler's NifMap).
+  Returns `{:ok, reference()}` for the pooled client (managed by the BEAM
+  garbage collector) or `{:error, %CloakedReq.Error{}}`.
+  """
+  @spec new_pool(map()) :: {:ok, reference()} | {:error, Error.t()}
+  def new_pool(config) when is_map(config) do
+    case nif_new_pool(config) do
+      {:ok, ref} when is_reference(ref) ->
+        {:ok, ref}
+
+      {:error, native_error} when is_map(native_error) ->
+        native_error_to_result(native_error)
+
+      other ->
+        unexpected_native_response(other)
+    end
+  end
+
+  @doc """
   Sends the request metadata and body to the Rust NIF.
 
   The metadata map is passed directly to the NIF (decoded via Rustler's NifMap).
   The body is passed as a raw binary (or nil). An optional cookie jar reference
-  enables automatic cookie persistence across requests.
+  enables automatic cookie persistence across requests, and an optional pool
+  reference routes the request through a dedicated client built with
+  `new_pool/1`.
   Returns `{:ok, response_meta, body}` or `{:error, %CloakedReq.Error{}}`.
   """
-  @spec perform_request(map(), binary() | nil, reference() | nil) :: {:ok, map(), binary()} | {:error, Error.t()}
-  def perform_request(payload, body, cookie_jar_ref \\ nil)
+  @spec perform_request(map(), binary() | nil, reference() | nil, reference() | nil) ::
+          {:ok, map(), binary()} | {:error, Error.t()}
+  def perform_request(payload, body, cookie_jar_ref \\ nil, pool_ref \\ nil)
 
-  def perform_request(payload, body, cookie_jar_ref) when is_map(payload) do
+  def perform_request(payload, body, cookie_jar_ref, pool_ref) when is_map(payload) do
     token = make_ref()
 
-    case safe_nif_perform_request(payload, body, token, cookie_jar_ref) do
+    case safe_nif_perform_request(payload, body, token, cookie_jar_ref, pool_ref) do
       :ok ->
         await_native_response(token, backstop_timeout(payload))
 
@@ -54,7 +78,7 @@ defmodule CloakedReq.Native do
     end
   end
 
-  def perform_request(_payload, _body, _cookie_jar_ref) do
+  def perform_request(_payload, _body, _cookie_jar_ref, _pool_ref) do
     {:error, Error.new(:invalid_request, "native payload must be a map")}
   end
 
@@ -102,14 +126,26 @@ defmodule CloakedReq.Native do
       {:ok, meta, response_body} when is_map(meta) and is_binary(response_body) ->
         {:ok, meta, response_body}
 
-      {:error, %{"type" => type, "message" => message, "details" => details}}
-      when is_binary(type) and is_binary(message) ->
-        error_type = to_error_type(type)
-        {:error, Error.new(error_type, message, details)}
+      {:error, native_error} when is_map(native_error) ->
+        native_error_to_result(native_error)
 
       other ->
         unexpected_native_response(other)
     end
+  end
+
+  # Maps the native error map (`%{"type" => ..., "message" => ..., "details" =>
+  # ...}`) into a `{:error, %CloakedReq.Error{}}`, falling back to a structured
+  # error when the shape is unexpected.
+  @spec native_error_to_result(map()) :: {:error, Error.t()}
+  defp native_error_to_result(%{"type" => type, "message" => message, "details" => details})
+       when is_binary(type) and is_binary(message) do
+    error_type = to_error_type(type)
+    {:error, Error.new(error_type, message, details)}
+  end
+
+  defp native_error_to_result(native_error) do
+    unexpected_native_response(native_error)
   end
 
   @spec unexpected_native_response(term()) :: {:error, Error.t()}
@@ -117,8 +153,8 @@ defmodule CloakedReq.Native do
     {:error, Error.new(:native_error, "unexpected native response", %{response: inspect(response)})}
   end
 
-  defp safe_nif_perform_request(payload, body, token, cookie_jar_ref) do
-    nif_perform_request(payload, body, token, cookie_jar_ref)
+  defp safe_nif_perform_request(payload, body, token, cookie_jar_ref, pool_ref) do
+    nif_perform_request(payload, body, token, cookie_jar_ref, pool_ref)
   rescue
     error in [ErlangError] ->
       {:error, %{"type" => "nif_panic", "message" => Exception.message(error), "details" => %{}}}
@@ -134,5 +170,7 @@ defmodule CloakedReq.Native do
   defp to_error_type(_), do: :native_error
 
   defp nif_create_cookie_jar, do: :erlang.nif_error(:nif_not_loaded)
-  defp nif_perform_request(_payload, _body, _token, _cookie_jar_ref), do: :erlang.nif_error(:nif_not_loaded)
+  defp nif_new_pool(_config), do: :erlang.nif_error(:nif_not_loaded)
+
+  defp nif_perform_request(_payload, _body, _token, _cookie_jar_ref, _pool_ref), do: :erlang.nif_error(:nif_not_loaded)
 end

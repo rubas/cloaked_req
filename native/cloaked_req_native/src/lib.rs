@@ -12,7 +12,7 @@ use std::time::Duration;
 use error::NativeError;
 use futures_util::StreamExt;
 use lru::LruCache;
-use request::{NativeProxyConfig, NativeRequest};
+use request::{NativePoolConfig, NativeProxyConfig, NativeRequest};
 use response::NativeResponseMeta;
 use rustler::env::SavedTerm;
 use rustler::serde::SerdeTerm;
@@ -61,6 +61,16 @@ struct CookieJarResource {
 }
 
 impl rustler::Resource for CookieJarResource {}
+
+/// Opaque HTTP client resource held by the BEAM.
+///
+/// Wraps a fully built wreq `Client` with its own connection pool. The client
+/// is automatically dropped when the Elixir term is garbage collected.
+struct ClientResource {
+    client: Client,
+}
+
+impl rustler::Resource for ClientResource {}
 
 struct RequestCancellationResource {
     abort_handle: Mutex<Option<AbortHandle>>,
@@ -150,7 +160,7 @@ fn get_or_build_client(
 
     // Build with no lock held so a slow Client::build() never blocks other
     // cache users. A racing duplicate build is harmless: the loser is dropped.
-    let client = build_client(emulation, insecure_skip_verify, connect_timeout_ms)?;
+    let client = build_client(emulation, insecure_skip_verify, connect_timeout_ms, None)?;
 
     let mut cache = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = cache.get(&key) {
@@ -164,10 +174,15 @@ fn build_client(
     emulation: Option<&str>,
     insecure_skip_verify: bool,
     connect_timeout_ms: u64,
+    pool_idle_timeout_ms: Option<u64>,
 ) -> Result<Client, NativeError> {
     let mut builder = Client::builder()
         .pool_max_idle_per_host(20)
         .connect_timeout(Duration::from_millis(connect_timeout_ms));
+
+    if let Some(ms) = pool_idle_timeout_ms {
+        builder = builder.pool_idle_timeout(Some(Duration::from_millis(ms)));
+    }
 
     if let Some(profile_name) = emulation {
         let profile: Profile = serde_json::from_value(Value::String(profile_name.to_string()))
@@ -240,6 +255,24 @@ fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
     })
 }
 
+/// Builds a dedicated HTTP client with its own connection pool.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_new_pool<'a>(env: Env<'a>, config: NativePoolConfig) -> Term<'a> {
+    match build_client(
+        config.emulation.as_deref(),
+        config.insecure_skip_verify,
+        config.connect_timeout_ms,
+        config.pool_idle_timeout_ms,
+    ) {
+        Ok(client) => (ok(), ResourceArc::new(ClientResource { client })).encode(env),
+        Err(native_error) => {
+            let error_value =
+                serde_json::to_value(native_error).expect("NativeError must serialize");
+            (error(), SerdeTerm(error_value)).encode(env)
+        }
+    }
+}
+
 #[rustler::nif]
 fn nif_perform_request<'a>(
     env: Env<'a>,
@@ -247,6 +280,7 @@ fn nif_perform_request<'a>(
     body: Option<Binary>,
     token: Term<'a>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
+    pool: Option<ResourceArc<ClientResource>>,
 ) -> Term<'a> {
     let caller = env.pid();
     let token_env = OwnedEnv::new();
@@ -271,8 +305,9 @@ fn nif_perform_request<'a>(
             })
         });
 
-        let request_handle =
-            tokio::spawn(async move { execute_request_async(request, body_vec, cookie_jar).await });
+        let request_handle = tokio::spawn(async move {
+            execute_request_async(request, body_vec, cookie_jar, pool).await
+        });
 
         cancellation.set_abort_handle(request_handle.abort_handle());
 
@@ -378,12 +413,16 @@ async fn execute_request_async(
     request: NativeRequest,
     body: Option<Vec<u8>>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
+    pool: Option<ResourceArc<ClientResource>>,
 ) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
-    let client = get_or_build_client(
-        request.emulation.as_deref(),
-        request.insecure_skip_verify,
-        request.connect_timeout_ms,
-    )?;
+    let client = match &pool {
+        Some(p) => p.client.clone(),
+        None => get_or_build_client(
+            request.emulation.as_deref(),
+            request.insecure_skip_verify,
+            request.connect_timeout_ms,
+        )?,
+    };
 
     let method = Method::from_bytes(request.method.as_bytes()).map_err(|reason| {
         NativeError::new(
@@ -495,8 +534,9 @@ fn execute_request(
     request: NativeRequest,
     body: Option<Vec<u8>>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
+    pool: Option<ResourceArc<ClientResource>>,
 ) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
-    RUNTIME.block_on(execute_request_async(request, body, cookie_jar))
+    RUNTIME.block_on(execute_request_async(request, body, cookie_jar, pool))
 }
 
 /// Validates that a `set-cookie` header's Domain attribute is safe to store.
@@ -554,6 +594,7 @@ fn extract_cookie_domain(header: &str) -> Option<&str> {
 fn on_load(env: Env, _info: Term) -> bool {
     env.register::<CookieJarResource>().is_ok()
         && env.register::<RequestCancellationResource>().is_ok()
+        && env.register::<ClientResource>().is_ok()
 }
 
 rustler::init!("Elixir.CloakedReq.Native", load = on_load);
@@ -630,7 +671,7 @@ mod tests {
         let mut request = base_request();
         request.emulation = Some("unknown_browser".to_string());
 
-        let result = execute_request(request, None, None);
+        let result = execute_request(request, None, None, None);
         assert!(result.is_err());
 
         let err = result.err().expect("expected error");
@@ -643,7 +684,7 @@ mod tests {
         let mut request = base_request();
         request.method = "BAD METHOD".to_string();
 
-        let result = execute_request(request, None, None);
+        let result = execute_request(request, None, None, None);
         assert!(result.is_err());
 
         let err = result.err().expect("expected error");
@@ -666,7 +707,8 @@ mod tests {
         request.url = url;
         request.headers = vec![("x-demo".to_string(), "1".to_string())];
 
-        let (meta, body) = execute_request(request, None, None).expect("request should succeed");
+        let (meta, body) =
+            execute_request(request, None, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
         assert_eq!(meta.status, 200);
@@ -701,7 +743,7 @@ mod tests {
         request.method = "POST".to_string();
         request.url = url;
 
-        let (meta, _body) = execute_request(request, Some(b"hello".to_vec()), None)
+        let (meta, _body) = execute_request(request, Some(b"hello".to_vec()), None, None)
             .expect("request should succeed");
         server.join().expect("server thread must join");
 
@@ -746,7 +788,7 @@ mod tests {
         request.url = url;
         request.receive_timeout_ms = 50;
 
-        let result = execute_request(request, None, None);
+        let result = execute_request(request, None, None, None);
         server.join().expect("server thread must join");
         assert!(result.is_err());
         let error = result.err().expect("expected error");
@@ -758,7 +800,7 @@ mod tests {
     fn fingerprint_smoke_test_with_emulation() {
         let request = NativeRequest {
             method: "GET".to_string(),
-            url: "https://tlsinfo.me/json".to_string(),
+            url: "https://thumbprint.me/api/v1/probe".to_string(),
             headers: vec![],
             receive_timeout_ms: 20_000,
             connect_timeout_ms: 30_000,
@@ -770,7 +812,7 @@ mod tests {
         };
 
         let (meta, body) =
-            execute_request(request, None, None).expect("fingerprint request should succeed");
+            execute_request(request, None, None, None).expect("fingerprint request should succeed");
         assert!(meta.status >= 200 && meta.status < 300);
 
         let payload: serde_json::Value =
@@ -795,7 +837,7 @@ mod tests {
         request.url = url;
         request.max_body_size_bytes = Some(100);
 
-        let result = execute_request(request, None, None);
+        let result = execute_request(request, None, None, None);
         server.join().expect("server thread must join");
 
         assert!(result.is_err());
@@ -820,7 +862,7 @@ mod tests {
         request.max_body_size_bytes = Some(1024);
 
         let (meta, response_body) =
-            execute_request(request, None, None).expect("request should succeed");
+            execute_request(request, None, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
         assert_eq!(meta.status, 200);
@@ -841,7 +883,7 @@ mod tests {
         request.url = url;
         request.max_body_size_bytes = None; // :unlimited — guard is always true
 
-        let result = execute_request(request, None, None);
+        let result = execute_request(request, None, None, None);
         server.join().expect("server thread must join");
 
         // No panic, no abort: the truncated body surfaces as a transport error.
@@ -860,7 +902,8 @@ mod tests {
         let mut request = base_request();
         request.url = url;
 
-        let (meta, body) = execute_request(request, None, None).expect("request should succeed");
+        let (meta, body) =
+            execute_request(request, None, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
         assert_eq!(meta.status, 204);
@@ -882,8 +925,8 @@ mod tests {
         request.url = url;
         request.max_body_size_bytes = Some(100);
 
-        let (meta, response_body) =
-            execute_request(request, None, None).expect("request at exact limit should succeed");
+        let (meta, response_body) = execute_request(request, None, None, None)
+            .expect("request at exact limit should succeed");
         server.join().expect("server thread must join");
 
         assert_eq!(meta.status, 200);
@@ -903,7 +946,7 @@ mod tests {
         let mut request = base_request();
         request.url = url;
 
-        let result = execute_request(request, None, None);
+        let result = execute_request(request, None, None, None);
         server.join().expect("server thread must join");
 
         // wreq may reject invalid header bytes at the HTTP parsing level.
@@ -969,7 +1012,7 @@ mod tests {
         let mut request = base_request();
         request.local_address = Some("not-an-ip".to_string());
 
-        let result = execute_request(request, None, None);
+        let result = execute_request(request, None, None, None);
         assert!(result.is_err());
 
         let err = result.err().expect("expected error");
@@ -992,7 +1035,8 @@ mod tests {
         request.url = url;
         request.local_address = Some("127.0.0.1".to_string());
 
-        let (meta, body) = execute_request(request, None, None).expect("request should succeed");
+        let (meta, body) =
+            execute_request(request, None, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
         assert_eq!(meta.status, 200);
@@ -1007,7 +1051,7 @@ mod tests {
         // distinct values than the cap and confirm the LRU never grows past it,
         // so a malicious or accidental rotation cannot leak Clients forever.
         for i in 0..(CLIENT_CACHE_CAP + 50) {
-            let _ = build_client(None, false, 900_000 + i as u64).map(|client| {
+            let _ = build_client(None, false, 900_000 + i as u64, None).map(|client| {
                 let mut cache = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
                 cache.put((None, false, 900_000 + i as u64), client);
             });
@@ -1018,6 +1062,30 @@ mod tests {
             len <= CLIENT_CACHE_CAP,
             "cache grew to {len}, expected at most {CLIENT_CACHE_CAP}"
         );
+    }
+
+    // --- Pool client tests ---
+    //
+    // The pool request path is proven in the Elixir e2e suite, which loads the
+    // real NIF. ResourceArc::new::<ClientResource>() cannot be constructed under
+    // cargo test (the resource type is only registered in on_load, which the
+    // test harness never runs), so these tests stay on build_client and
+    // nif_new_pool's error mapping.
+
+    #[test]
+    fn build_client_accepts_pool_idle_timeout() {
+        let result = build_client(Some("chrome_136"), false, 30_000, Some(5_000));
+        assert!(result.is_ok(), "pool client with idle timeout should build");
+    }
+
+    #[test]
+    fn build_client_rejects_unknown_emulation_profile() {
+        let result = build_client(Some("unknown_browser"), false, 30_000, None);
+        assert!(result.is_err());
+
+        let err = result.err().expect("expected error");
+        assert_eq!(err.type_name, "invalid_request");
+        assert_eq!(err.message, "unknown emulation profile");
     }
 
     // --- Cookie domain safety tests ---

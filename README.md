@@ -13,7 +13,7 @@ Keep Req ergonomics while swapping transport to Rust `wreq` for impersonation an
 ```elixir
 def deps do
   [
-    {:cloaked_req, "~> 0.4.0"}
+    {:cloaked_req, "~> 0.5.0"}
   ]
 end
 ```
@@ -47,6 +47,7 @@ request =
 | `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification              |
 | `:local_address`        | IP string or IP tuple       | `nil`   | Bind outbound requests to a specific source IP |
 | `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max request and response body size             |
+| `:pool`                 | `Pool.t()`                  | `nil`   | Dedicated, isolated client and connection pool |
 
 `:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit. Req's `:receive_timeout` (default 15s) is also respected.
 
@@ -95,6 +96,24 @@ Req.new(url: "https://example.com/dashboard")
 |> CloakedReq.attach(impersonate: :chrome_136, cookie_jar: jar)
 |> Req.get!()
 ```
+
+### Connection pooling
+
+By default every request goes through a shared, bounded client cache: requests with the same impersonation profile, TLS verification, and connect timeout reuse one client and its connection pool. That keeps connection reuse high for most callers without any setup.
+
+For per-identity isolation, build a `CloakedReq.Pool`. A pool is a dedicated client with its own connections, TLS session cache, and HTTP/2 multiplexing, never shared with another identity. Build one per identity (per account, per proxy persona, per crawl) so a connection opened for one is never reused for another. Hold the pool in a worker's state and pass it to every request that worker makes.
+
+```elixir
+pool = CloakedReq.Pool.new!(impersonate: :chrome_136)
+
+Req.new(url: "https://example.com")
+|> CloakedReq.attach(pool: pool)
+|> Req.get!()
+```
+
+The pool fixes the client at build time, so when a request runs through a pool, the pool's client governs the impersonation profile, TLS verification, and connect timeout; per-request `:impersonate`, `:insecure_skip_verify`, and the `:connect_options` connect timeout are ignored (still validated if given). Per-request proxy, source address, headers, body, cookie jar, and the receive timeout still apply. Each pool keeps up to 20 idle connections per host.
+
+The client is garbage-collected by the BEAM when the pool struct is no longer referenced, so its idle connections close on their own. A worker that crashes without an explicit teardown cannot leak the pool. To rotate a pool's identity — for example after its upstream proxy exit changes — build a new pool and drop the old struct. Pass `:pool_idle_timeout` (milliseconds) to bound how long an idle connection is kept before it closes; the default uses wreq's own.
 
 ## Impersonation Profiles
 

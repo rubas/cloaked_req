@@ -8,7 +8,7 @@ defmodule CloakedReq.ExternalFingerprintTest do
 
   @moduletag :external
 
-  @fingerprint_url "https://tlsinfo.me/json"
+  @fingerprint_url "https://thumbprint.me/api/v1/probe"
 
   test "impersonated request has a different JA4 fingerprint than plain Req" do
     plain_fingerprint =
@@ -38,6 +38,36 @@ defmodule CloakedReq.ExternalFingerprintTest do
     payload = decode_body(response)
     assert is_binary(payload["ja4"]) and payload["ja4"] != ""
     assert is_binary(payload["ja4_r"]) and payload["ja4_r"] != ""
+  end
+
+  test "a pool's fingerprint overrides a conflicting per-request impersonate" do
+    {:ok, chrome_pool} = CloakedReq.Pool.new(impersonate: :chrome_136)
+
+    via_pool =
+      [url: @fingerprint_url]
+      |> Req.new()
+      |> CloakedReq.attach(pool: chrome_pool)
+      |> fetch_fingerprint()
+
+    via_pool_with_conflict =
+      [url: @fingerprint_url]
+      |> Req.new()
+      |> CloakedReq.attach(pool: chrome_pool, impersonate: :firefox_136)
+      |> fetch_fingerprint()
+
+    firefox_direct =
+      [url: @fingerprint_url]
+      |> Req.new()
+      |> CloakedReq.attach(impersonate: :firefox_136)
+      |> fetch_fingerprint()
+
+    assert via_pool, "pooled request must return a JA4 fingerprint"
+
+    assert via_pool_with_conflict == via_pool,
+           "the pool's fingerprint must win over a per-request impersonate"
+
+    assert via_pool_with_conflict != firefox_direct,
+           "the per-request firefox profile must not leak through a chrome pool"
   end
 
   @spec fetch_fingerprint(Req.Request.t()) :: String.t() | nil

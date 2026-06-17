@@ -107,11 +107,17 @@ defmodule CloakedReq.Request do
     end)
   end
 
-  @spec normalize_impersonate(term()) :: {:ok, nil | String.t()} | {:error, Error.t()}
-  defp normalize_impersonate(nil), do: {:ok, nil}
-  defp normalize_impersonate(value) when is_atom(value), do: {:ok, Atom.to_string(value)}
+  @doc """
+  Normalizes an `:impersonate` profile option to the string the NIF expects.
 
-  defp normalize_impersonate(_value) do
+  Shared by the request bridge and `CloakedReq.Pool`. Returns `{:ok, nil}` for
+  no profile, `{:ok, name}` for a profile atom, or an `:invalid_request` error.
+  """
+  @spec normalize_impersonate(term()) :: {:ok, nil | String.t()} | {:error, Error.t()}
+  def normalize_impersonate(nil), do: {:ok, nil}
+  def normalize_impersonate(value) when is_atom(value), do: {:ok, Atom.to_string(value)}
+
+  def normalize_impersonate(_value) do
     {:error, Error.new(:invalid_request, "impersonate must be a profile atom")}
   end
 
@@ -160,11 +166,19 @@ defmodule CloakedReq.Request do
     end
   end
 
-  @spec normalize_connect_timeout(term()) :: {:ok, pos_integer()} | {:error, Error.t()}
-  defp normalize_connect_timeout(value) when is_integer(value) and value > 0, do: {:ok, value}
+  @doc """
+  Normalizes a positive-integer connect timeout in milliseconds.
 
-  defp normalize_connect_timeout(_value) do
-    {:error, Error.new(:invalid_request, "connect_options timeout must be a positive integer")}
+  Shared by the request bridge and `CloakedReq.Pool`; `field` names the option
+  in the error message so each caller reports its own option name.
+  """
+  @spec normalize_connect_timeout(term(), String.t()) :: {:ok, pos_integer()} | {:error, Error.t()}
+  def normalize_connect_timeout(value, field \\ "connect_options timeout")
+
+  def normalize_connect_timeout(value, _field) when is_integer(value) and value > 0, do: {:ok, value}
+
+  def normalize_connect_timeout(_value, field) do
+    {:error, Error.new(:invalid_request, "#{field} must be a positive integer")}
   end
 
   @spec normalize_proxy(term(), term()) :: {:ok, nil | map()} | {:error, Error.t()}
@@ -220,10 +234,16 @@ defmodule CloakedReq.Request do
     {:error, Error.new(:invalid_request, "connect_options proxy_headers must be a list or map")}
   end
 
-  @spec normalize_insecure_skip_verify(term()) :: {:ok, boolean()} | {:error, Error.t()}
-  defp normalize_insecure_skip_verify(value) when is_boolean(value), do: {:ok, value}
+  @doc """
+  Normalizes the `:insecure_skip_verify` option to a boolean.
 
-  defp normalize_insecure_skip_verify(_value) do
+  Shared by the request bridge and `CloakedReq.Pool`. Returns `{:ok, boolean}`
+  or an `:invalid_request` error.
+  """
+  @spec normalize_insecure_skip_verify(term()) :: {:ok, boolean()} | {:error, Error.t()}
+  def normalize_insecure_skip_verify(value) when is_boolean(value), do: {:ok, value}
+
+  def normalize_insecure_skip_verify(_value) do
     {:error, Error.new(:invalid_request, "insecure_skip_verify must be a boolean")}
   end
 

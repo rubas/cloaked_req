@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+## [0.5.0] - 27.06.2026
+
+### Added
+
+- `CloakedReq.Pool` (`new/1`, `new!/1`) and a `:pool` attach option for a dedicated, isolated client and connection pool. By default requests share a bounded client cache; a pool gives one caller its own client whose connections, TLS session cache, and HTTP/2 multiplexing are never shared with another identity. The pool fixes the fingerprint at build time (per-request `:impersonate` and `:insecure_skip_verify` are ignored when a pool is set), and the BEAM garbage-collects the client when the pool struct is no longer referenced, so a crashing worker cannot leak it. Requested in #32 by @notmyactual.
+
 ## [0.4.2] - 11.06.2026
 
 ### Added

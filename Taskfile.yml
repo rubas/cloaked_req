@@ -89,7 +89,19 @@ tasks:
 
   upgrade:
     desc: Upgrade all dependencies
-    deps: [upgrade:elixir]
+    deps: [upgrade:elixir, upgrade:rust]
+
+  upgrade:rust:
+    desc: Upgrade the native NIF crate to its latest versions
+    cmds:
+      - cargo upgrade --manifest-path native/cloaked_req_native/Cargo.toml --incompatible allow
+      - cargo update --manifest-path native/cloaked_req_native/Cargo.toml
+
+  outdated:
+    desc: Report deps with newer releases on Hex / crates.io
+    cmds:
+      - mix hex.outdated
+      - cargo upgrade --dry-run --manifest-path native/cloaked_req_native/Cargo.toml --incompatible allow
 
   sync:rules:
     cmds:

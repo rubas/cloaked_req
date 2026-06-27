@@ -117,11 +117,11 @@ The client is garbage-collected by the BEAM when the pool struct is no longer re
 
 ## Impersonation Profiles
 
-Profiles based on `wreq-util 3.0.0-rc.12`. Profile atoms with a dot must be quoted, e.g. `:"safari_17.4.1"`.
+Profiles based on `wreq-util 3.0.0-rc.13`. Profile atoms with a dot must be quoted, e.g. `:"safari_17.4.1"`.
 
 ### Chrome
 
-`:chrome_100`, `:chrome_101`, `:chrome_104`, `:chrome_105`, `:chrome_106`, `:chrome_107`, `:chrome_108`, `:chrome_109`, `:chrome_110`, `:chrome_114`, `:chrome_116`, `:chrome_117`, `:chrome_118`, `:chrome_119`, `:chrome_120`, `:chrome_123`, `:chrome_124`, `:chrome_126`, `:chrome_127`, `:chrome_128`, `:chrome_129`, `:chrome_130`, `:chrome_131`, `:chrome_132`, `:chrome_133`, `:chrome_134`, `:chrome_135`, `:chrome_136`, `:chrome_137`, `:chrome_138`, `:chrome_139`, `:chrome_140`, `:chrome_141`, `:chrome_142`, `:chrome_143`, `:chrome_144`, `:chrome_145`, `:chrome_146`, `:chrome_147`, `:chrome_148`
+`:chrome_100`, `:chrome_101`, `:chrome_104`, `:chrome_105`, `:chrome_106`, `:chrome_107`, `:chrome_108`, `:chrome_109`, `:chrome_110`, `:chrome_114`, `:chrome_116`, `:chrome_117`, `:chrome_118`, `:chrome_119`, `:chrome_120`, `:chrome_123`, `:chrome_124`, `:chrome_126`, `:chrome_127`, `:chrome_128`, `:chrome_129`, `:chrome_130`, `:chrome_131`, `:chrome_132`, `:chrome_133`, `:chrome_134`, `:chrome_135`, `:chrome_136`, `:chrome_137`, `:chrome_138`, `:chrome_139`, `:chrome_140`, `:chrome_141`, `:chrome_142`, `:chrome_143`, `:chrome_144`, `:chrome_145`, `:chrome_146`, `:chrome_147`, `:chrome_148`, `:chrome_149`
 
 ### Edge
 

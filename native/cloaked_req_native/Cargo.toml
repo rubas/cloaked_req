@@ -1,6 +1,6 @@
 [package]
 name = "cloaked_req_native"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 rust-version = "1.91"
 
@@ -18,7 +18,7 @@ lru = "0.18"
 wreq = { version = "6.0.0-rc.29", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies", "stream"] }
 http = "1"
 psl = "2"
-wreq-util = { version = "3.0.0-rc.12", features = ["emulation-serde"] }
+wreq-util = { version = "3.0.0-rc.13", features = ["emulation-serde"] }
 
 [lints.rust]
 unsafe_code = "forbid"

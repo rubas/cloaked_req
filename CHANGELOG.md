@@ -6,6 +6,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+## [0.5.1] - 27.06.2026
+
+### Added
+
+- `:chrome_149` impersonation profile, picked up from the `wreq-util` 3.0.0-rc.13 update.
+
+### Changed
+
+- Update the Rust NIF dependencies (`wreq-util` to 3.0.0-rc.13, plus `http` and `psl` patch releases) and refresh Elixir dependencies (`req` to 0.6.2 and the dev tooling) to latest. The `wreq-util` bump is additive: it adds the Chrome 149 profile and changes nothing for existing profiles.
+
 ## [0.5.0] - 27.06.2026
 
 ### Added

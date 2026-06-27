@@ -2,6 +2,20 @@ version: "3"
 
 env:
   CLOAKED_REQ_BUILD: "true"
+  # boring-sys generates bindings with bindgen, whose libclang does not inherit
+  # the Nix cc wrapper's libc include paths, so it cannot find <stdlib.h> on
+  # NixOS (there is no /usr/include). Feed it the wrapper's libc-cflags plus the
+  # libclang resource headers. Empty and harmless where system headers exist.
+  BINDGEN_EXTRA_CLANG_ARGS:
+    sh: |
+      cc=$(command -v cc 2>/dev/null) || exit 0
+      ns="$(dirname "$(readlink -f "$cc")")/../nix-support"
+      [ -f "$ns/libc-cflags" ] || exit 0
+      args="$(cat "$ns/libc-cflags")"
+      for d in "${LIBCLANG_PATH:-/nonexistent}"/clang/*/include; do
+        [ -d "$d" ] && args="$args -idirafter $d"
+      done
+      printf '%s' "$args"
 
 tasks:
   setup:

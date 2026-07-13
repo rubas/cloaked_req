@@ -14,8 +14,7 @@ defmodule CloakedReq.MixProject do
       description: description(),
       package: package(),
       docs: docs(),
-      deps: deps(),
-      usage_rules: usage_rules()
+      deps: deps()
     ]
   end
 
@@ -26,15 +25,6 @@ defmodule CloakedReq.MixProject do
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
-
-  defp usage_rules do
-    [
-      file: "AGENTS.md",
-      usage_rules: [
-        {~r/.*/, link: :markdown}
-      ]
-    ]
-  end
 
   @spec docs() :: keyword()
   defp docs do
@@ -61,7 +51,7 @@ defmodule CloakedReq.MixProject do
         "wreq" => "https://docs.rs/wreq/latest/wreq/"
       },
       files:
-        ~w(lib native/cloaked_req_native/src native/cloaked_req_native/Cargo.toml native/cloaked_req_native/Cargo.lock checksum-*.exs mix.exs README.md CHANGELOG.md usage-rules.md LICENSE*)
+        ~w(lib native/cloaked_req_native/src native/cloaked_req_native/Cargo.toml native/cloaked_req_native/Cargo.lock checksum-*.exs mix.exs README.md CHANGELOG.md LICENSE*)
     ]
   end
 
@@ -78,8 +68,7 @@ defmodule CloakedReq.MixProject do
       {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
       {:styler, "~> 1.11", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.38", only: :dev, runtime: false},
-      {:usage_rules, "~> 1.2.4", only: [:dev], runtime: false}
+      {:ex_doc, "~> 0.38", only: :dev, runtime: false}
     ]
   end
 end

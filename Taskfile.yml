@@ -103,16 +103,11 @@ tasks:
       - mix hex.outdated
       - cargo upgrade --dry-run --manifest-path native/cloaked_req_native/Cargo.toml --incompatible allow
 
-  sync:rules:
-    cmds:
-      - mix usage_rules.sync --yes
-
   upgrade:elixir:
     cmds:
       - mix deps.update --all
       - mix deps.get
       - mix deps.compile
-      - task: sync:rules
       - mix hex.outdated
 
   check:

@@ -32,7 +32,7 @@ jobs:
             version-type: "strict"
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -40,19 +40,19 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL https://github.com/zizmorcore/zizmor/releases/download/v1.25.2/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+          curl -fsSL https://github.com/zizmorcore/zizmor/releases/download/v1.27.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
             | tar -xz -C "$HOME/.local/bin" zizmor
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake golang-go
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
 
       - name: Cache Rust
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: native/cloaked_req_native/target
           key: rust-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
@@ -61,7 +61,7 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path native/cloaked_req_native/Cargo.toml
 
-      - uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93 # v1.24.0
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         env:
           INSTALL_DIR_FOR_OTP: ${{ runner.tool_cache }}/setup-beam/otp-${{ matrix.otp }}
           INSTALL_DIR_FOR_ELIXIR: ${{ runner.tool_cache }}/setup-beam/elixir-${{ matrix.elixir }}
@@ -71,7 +71,7 @@ jobs:
           version-type: ${{ matrix.version-type }}
 
       - name: Cache Elixir
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             _build

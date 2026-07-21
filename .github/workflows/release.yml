@@ -30,7 +30,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       tag_exists: ${{ steps.resolve.outputs.tag_exists }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -107,11 +107,11 @@ jobs:
             lib_ext: dylib
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -136,7 +136,7 @@ jobs:
       # --- Build ---
 
       - name: Cargo cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -173,7 +173,7 @@ jobs:
           rm "${SRC_DIR}/${LIB_NAME}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nif-${{ matrix.target }}
           path: "*cloaked_req_native-*.tar.gz"
@@ -190,7 +190,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}-tag
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: # zizmor: ignore[artipacked] credentials are required to push the release tag
           fetch-depth: 0
 
@@ -217,7 +217,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}-release
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: # zizmor: ignore[artipacked] credentials are required to push the checksum commit
           ref: main
 
@@ -235,7 +235,7 @@ jobs:
         run: sha256sum *.tar.gz | tee SHA256SUMS
 
       - name: Create release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0 # zizmor: ignore[superfluous-actions] action handles release asset upload and notes generation beyond a plain gh release call
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 # zizmor: ignore[superfluous-actions] action handles release asset upload and notes generation beyond a plain gh release call
         with:
           tag_name: ${{ needs.detect.outputs.tag }}
           target_commitish: main

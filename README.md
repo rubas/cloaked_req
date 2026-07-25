@@ -1,12 +1,8 @@
 # cloaked_req
 
-`cloaked_req` is a Req adapter backed by Rust [`wreq`](https://docs.rs/wreq/latest/wreq/), focused on browser impersonation and performance.
+`cloaked_req` is a Req adapter backed by Rust [`wreq`](https://docs.rs/wreq/latest/wreq/). You keep Req ergonomics and send fingerprint-sensitive requests with a real browser's TLS and HTTP/2 signature.
 
 Docs: <https://hexdocs.pm/cloaked_req>
-
-## Goal
-
-Keep Req ergonomics while swapping transport to Rust `wreq` for impersonation and fingerprint-sensitive requests.
 
 ## Installation
 
@@ -38,7 +34,7 @@ request =
   |> CloakedReq.impersonate(:firefox_136)
 ```
 
-## Adapter Options
+## Adapter options
 
 | Option                  | Type                        | Default | Description                                    |
 | ----------------------- | --------------------------- | ------- | ---------------------------------------------- |
@@ -51,7 +47,7 @@ request =
 
 `:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit. Req's `:receive_timeout` (default 15s) is also respected.
 
-### Req Connect Options
+### Req connect options
 
 `CloakedReq` respects these Req `:connect_options`:
 
@@ -79,19 +75,19 @@ Req.new(url: "https://example.com")
 |> CloakedReq.attach(local_address: {127, 0, 0, 1})
 ```
 
-### Cookie Jar
+### Cookie jar
 
-Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar uses PSL-based domain validation — it rejects cookies set on public suffixes and cross-origin domains.
+Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain.
 
 ```elixir
 jar = CloakedReq.CookieJar.new()
 
-# Login — server sets session cookie
+# Login: server sets session cookie
 Req.new(url: "https://example.com/login")
 |> CloakedReq.attach(impersonate: :chrome_136, cookie_jar: jar)
 |> Req.post!(body: "user=admin&pass=secret")
 
-# Dashboard — session cookie sent automatically
+# Dashboard: session cookie sent automatically
 Req.new(url: "https://example.com/dashboard")
 |> CloakedReq.attach(impersonate: :chrome_136, cookie_jar: jar)
 |> Req.get!()
@@ -113,9 +109,9 @@ Req.new(url: "https://example.com")
 
 The pool fixes the client at build time, so when a request runs through a pool, the pool's client governs the impersonation profile, TLS verification, and connect timeout; per-request `:impersonate`, `:insecure_skip_verify`, and the `:connect_options` connect timeout are ignored (still validated if given). Per-request proxy, source address, headers, body, cookie jar, and the receive timeout still apply. Each pool keeps up to 20 idle connections per host.
 
-The client is garbage-collected by the BEAM when the pool struct is no longer referenced, so its idle connections close on their own. A worker that crashes without an explicit teardown cannot leak the pool. To rotate a pool's identity — for example after its upstream proxy exit changes — build a new pool and drop the old struct. Pass `:pool_idle_timeout` (milliseconds) to bound how long an idle connection is kept before it closes; the default uses wreq's own.
+The client is garbage-collected by the BEAM when the pool struct is no longer referenced, so its idle connections close on their own. A worker that crashes without an explicit teardown cannot leak the pool. To rotate a pool's identity (for example after its upstream proxy exit changes), build a new pool and drop the old struct. Pass `:pool_idle_timeout` (milliseconds) to bound how long an idle connection is kept before it closes; the default uses wreq's own.
 
-## Impersonation Profiles
+## Impersonation profiles
 
 Profiles based on `wreq-util 3.0.0-rc.13`. Profile atoms with a dot must be quoted, e.g. `:"safari_17.4.1"`.
 
@@ -145,4 +141,4 @@ Profiles based on `wreq-util 3.0.0-rc.13`. Profile atoms with a dot must be quot
 
 ## Limitations
 
-- **No HTTP/3 / QUIC** — wreq supports HTTP/1.1 and HTTP/2 only. QUIC transport fingerprinting (JA4QUIC) is not available. If HTTP/3 fingerprinting is critical for your use case, consider a Go-based alternative like [surf](https://github.com/enetx/surf) which supports HTTP/3 with full QUIC fingerprinting — though it would require a different integration approach (sidecar/Port rather than NIF).
+- **No HTTP/3 or QUIC.** wreq speaks HTTP/1.1 and HTTP/2 only, so QUIC transport fingerprinting (JA4QUIC) is out of reach. When you need it, look at the Go library [surf](https://github.com/enetx/surf), which fingerprints QUIC; reaching it from Elixir means a sidecar or Port instead of a NIF.

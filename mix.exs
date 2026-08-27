@@ -1,7 +1,7 @@
 defmodule CloakedReq.MixProject do
   use Mix.Project
 
-  @version "0.5.1"
+  @version "0.6.0"
 
   @spec project() :: keyword()
   def project do
@@ -58,7 +58,7 @@ defmodule CloakedReq.MixProject do
   @spec deps() :: [tuple()]
   defp deps do
     [
-      {:req, "~> 0.5 or ~> 0.6"},
+      {:req, "~> 0.7"},
       {:rustler, "~> 0.38.0", optional: true},
       {:rustler_precompiled, "~> 0.8"},
       {:credo, "~> 1.7.17", only: [:dev, :test], runtime: false},

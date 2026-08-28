@@ -488,9 +488,8 @@ async fn execute_request_async(
 
     // Store cookies against the actual response URI so redirects use the
     // final host for PSL validation and jar scoping.
-    if let Some(ref jar) = cookie_jar
-        && let Ok(response_uri) = response.uri().to_string().parse::<http::Uri>()
-    {
+    if let Some(ref jar) = cookie_jar {
+        let response_uri = response.uri();
         let host = response_uri.host().unwrap_or_default();
         let set_cookies: Vec<_> = response
             .headers()
@@ -500,7 +499,7 @@ async fn execute_request_async(
             .collect();
         if !set_cookies.is_empty() {
             let mut iter = set_cookies.into_iter();
-            jar.jar.set_cookies(&mut iter, &response_uri);
+            jar.jar.set_cookies(&mut iter, response_uri);
         }
     }
 

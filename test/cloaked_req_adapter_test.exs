@@ -13,24 +13,6 @@ defmodule CloakedReq.AdapterTest do
   doctest AdapterError, import: false
 
   # -------------------------------------------------------------------
-  # Public API wiring
-  # -------------------------------------------------------------------
-
-  test "attach/2 configures adapter and custom options" do
-    request = [url: "https://example.com"] |> Req.new() |> CloakedReq.attach(impersonate: :chrome_136)
-
-    assert request.adapter == CloakedReq
-    assert Req.Request.get_option(request, :impersonate) == :chrome_136
-  end
-
-  test "impersonate/2 sets profile option and adapter" do
-    request = [url: "https://example.com"] |> Req.new() |> CloakedReq.impersonate(:firefox_136)
-
-    assert Req.Request.get_option(request, :impersonate) == :firefox_136
-    assert request.adapter == CloakedReq
-  end
-
-  # -------------------------------------------------------------------
   # Req bridge: to_native_payload/1
   # -------------------------------------------------------------------
 

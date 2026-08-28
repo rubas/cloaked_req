@@ -16,6 +16,13 @@ defmodule CloakedReqTest do
     assert request.adapter == CloakedReq
   end
 
+  test "attach/2 sets the adapter and the given options" do
+    request = [url: "https://example.com"] |> Req.new() |> CloakedReq.attach(impersonate: :chrome_136)
+
+    assert request.adapter == CloakedReq
+    assert Req.Request.get_option(request, :impersonate) == :chrome_136
+  end
+
   test "impersonate/2 sets profile and adapter on request" do
     request = [url: "https://example.com"] |> Req.new() |> CloakedReq.impersonate(:firefox_136)
 

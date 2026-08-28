@@ -458,19 +458,19 @@ async fn execute_request_async(
         builder = builder.header(name.as_str(), value.as_str());
     }
 
-    if let Some(ref jar) = cookie_jar {
-        if let Ok(parsed_uri) = request.url.parse::<http::Uri>() {
-            match jar.jar.cookies(&parsed_uri, http::Version::HTTP_11) {
-                Cookies::Compressed(val) => {
+    if let Some(ref jar) = cookie_jar
+        && let Ok(parsed_uri) = request.url.parse::<http::Uri>()
+    {
+        match jar.jar.cookies(&parsed_uri, http::Version::HTTP_11) {
+            Cookies::Compressed(val) => {
+                builder = builder.header("cookie", val);
+            }
+            Cookies::Uncompressed(vals) => {
+                for val in vals {
                     builder = builder.header("cookie", val);
                 }
-                Cookies::Uncompressed(vals) => {
-                    for val in vals {
-                        builder = builder.header("cookie", val);
-                    }
-                }
-                _ => {}
             }
+            _ => {}
         }
     }
 
@@ -488,19 +488,19 @@ async fn execute_request_async(
 
     // Store cookies against the actual response URI so redirects use the
     // final host for PSL validation and jar scoping.
-    if let Some(ref jar) = cookie_jar {
-        if let Ok(response_uri) = response.uri().to_string().parse::<http::Uri>() {
-            let host = response_uri.host().unwrap_or_default();
-            let set_cookies: Vec<_> = response
-                .headers()
-                .get_all("set-cookie")
-                .iter()
-                .filter(|hv| is_cookie_domain_safe(hv.as_bytes(), host))
-                .collect();
-            if !set_cookies.is_empty() {
-                let mut iter = set_cookies.into_iter();
-                jar.jar.set_cookies(&mut iter, &response_uri);
-            }
+    if let Some(ref jar) = cookie_jar
+        && let Ok(response_uri) = response.uri().to_string().parse::<http::Uri>()
+    {
+        let host = response_uri.host().unwrap_or_default();
+        let set_cookies: Vec<_> = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter(|hv| is_cookie_domain_safe(hv.as_bytes(), host))
+            .collect();
+        if !set_cookies.is_empty() {
+            let mut iter = set_cookies.into_iter();
+            jar.jar.set_cookies(&mut iter, &response_uri);
         }
     }
 
@@ -672,9 +672,7 @@ mod tests {
         request.emulation = Some("unknown_browser".to_string());
 
         let result = execute_request(request, None, None, None);
-        assert!(result.is_err());
-
-        let err = result.err().expect("expected error");
+        let err = result.expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "unknown emulation profile");
     }
@@ -685,9 +683,7 @@ mod tests {
         request.method = "BAD METHOD".to_string();
 
         let result = execute_request(request, None, None, None);
-        assert!(result.is_err());
-
-        let err = result.err().expect("expected error");
+        let err = result.expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "invalid HTTP method");
     }
@@ -790,8 +786,7 @@ mod tests {
 
         let result = execute_request(request, None, None, None);
         server.join().expect("server thread must join");
-        assert!(result.is_err());
-        let error = result.err().expect("expected error");
+        let error = result.expect_err("expected error");
         assert_eq!(error.type_name, "transport_error");
         assert_eq!(error.message, "request execution failed");
     }
@@ -840,8 +835,7 @@ mod tests {
         let result = execute_request(request, None, None, None);
         server.join().expect("server thread must join");
 
-        assert!(result.is_err());
-        let err = result.err().expect("expected error");
+        let err = result.expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "response body exceeds max_body_size");
     }
@@ -887,9 +881,7 @@ mod tests {
         server.join().expect("server thread must join");
 
         // No panic, no abort: the truncated body surfaces as a transport error.
-        let err = result
-            .err()
-            .expect("expected truncated-body error, not a crash");
+        let err = result.expect_err("expected truncated-body error, not a crash");
         assert_eq!(err.type_name, "transport_error");
     }
 
@@ -1013,9 +1005,7 @@ mod tests {
         request.local_address = Some("not-an-ip".to_string());
 
         let result = execute_request(request, None, None, None);
-        assert!(result.is_err());
-
-        let err = result.err().expect("expected error");
+        let err = result.expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "invalid local_address");
     }
@@ -1081,9 +1071,7 @@ mod tests {
     #[test]
     fn build_client_rejects_unknown_emulation_profile() {
         let result = build_client(Some("unknown_browser"), false, 30_000, None);
-        assert!(result.is_err());
-
-        let err = result.err().expect("expected error");
+        let err = result.map(drop).expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "unknown emulation profile");
     }

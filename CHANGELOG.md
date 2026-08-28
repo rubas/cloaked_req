@@ -6,6 +6,27 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+## [0.6.0] - 28.08.2026
+
+### Fixed
+
+- Impersonated requests sent `user-agent: req/<version>`. The profile user-agent did not go on the wire. Req's `put_user_agent` step set the header, and a per-request header wins over the client defaults. Thus `req/<version>` went out next to the profile `sec-ch-ua`. A detector can find this pair. `attach/2` and `impersonate/2` now remove that default, and the profile sets the user-agent. An explicit `user-agent` header or `:user_agent` option still wins.
+- Impersonated requests sent `accept-encoding: zstd,gzip,deflate,br`. This was not the profile value. The `wreq-util` build did not use the `emulation-compression` feature, so wreq set its own value and order. The feature is now on. Chrome now sends `gzip, deflate, br, zstd`, the same as the real browser, and the header is in the browser position. Responses still decode.
+
+### Changed
+
+- Require Req 0.7 (`~> 0.7`, was `~> 0.5 or ~> 0.6`). Req 0.7 makes function adapters obsolete. `attach/2` and `impersonate/2` now set `adapter: CloakedReq`. Change a check of `is_function(req.adapter, 1)` to `req.adapter == CloakedReq`. Req 0.5 and Req 0.6 cannot call a module adapter, thus they are not supported.
+- Move the Rust NIF to the stable `wreq` line: `wreq` 6.0.0-rc.29 to 0.16.1, and `wreq-util` 3.0.0-rc.14 to 0.2.0. Upstream reset the version numbers on 2026-08-22. It is the same project with new numbers, but the jump also includes rc.30, rc.31 and the two 0.16 releases. The bullets below give the changes that you can see.
+- Impersonation headers are different for each profile. There are still 133 profiles, and no profile was added or removed. The header set and the header order changed. Chrome now also sends `upgrade-insecure-requests: 1` and `sec-fetch-user: ?1`, and its `sec-fetch-*` block is now after `accept`. Firefox carries `te: trailers` on the profile. Opera has the `sec-fetch-*` group, and its `accept` changes `signed-exchange;v=b3` from `q=0.9` to `q=0.7`. Test again each profile that you tuned for a detector.
+- Cookies: a host-only cookie no longer goes to subdomains. A host-only cookie has no `Domain` attribute. The old jar matched the suffix, thus a cookie for `example.com` also went to `sub.example.com`. A session that needs this now fails, and there is no error message.
+- Cookies: `Max-Age` now expires a cookie. The old jar read only `Expires`, thus a live `Max-Age` cookie stayed forever.
+- Cookies: the `cookie` header now has a stable order: longest path first, then creation order. The old jar used a hash map, thus the order changed between requests.
+- Cookies: an `http://` origin can no longer set a `Secure` cookie or replace one. The old jar stored these cookies and filtered them only at send time.
+- Range requests: a request with a `Range` header now sends `accept-encoding: identity`. This replaces your value.
+- Errors: a DNS failure now gives `dns resolution error: ...` in the `:reason` field of `CloakedReq.AdapterError`. No Elixir code matches this text.
+- The crate `rust-version` is now 1.98, because `wreq` 0.16 and `wreq-util` 0.2.0 need it. This applies only if you build the NIF from source with `CLOAKED_REQ_BUILD`. The precompiled NIFs do not change.
+- Update the other Rust dependencies: `http` 1.4.2 to 1.5.0, `psl` 2.1.219 to 2.1.226, `lru` 0.18.1 to 0.18.3, `flate2` 1.1.9 to 1.1.10, and transitive patch releases. Update the Elixir dev tools: `styler`, `sobelow`, `ex_slop`.
+
 ## [0.5.1] - 27.06.2026
 
 ### Added

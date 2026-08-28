@@ -1,24 +1,24 @@
 [package]
 name = "cloaked_req_native"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.98"
 
 [lib]
 name = "cloaked_req_native"
 crate-type = ["cdylib"]
 
 [dependencies]
+futures-util = "0.3"
+http = "1"
+lru = "0.18"
+psl = "2"
 rustler = { version = "0.38", default-features = false, features = ["derive", "serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
-futures-util = "0.3"
-lru = "0.18"
-wreq = { version = "6.0.0-rc.29", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies", "stream"] }
-http = "1"
-psl = "2"
-wreq-util = { version = "3.0.0-rc.14", features = ["emulation-serde"] }
+wreq = { version = "0.16.1", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies", "stream"] }
+wreq-util = { version = "0.2.0", features = ["emulation-serde", "emulation-compression"] }
 
 [lints.rust]
 unsafe_code = "forbid"

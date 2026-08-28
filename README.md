@@ -9,7 +9,7 @@ Docs: <https://hexdocs.pm/cloaked_req>
 ```elixir
 def deps do
   [
-    {:cloaked_req, "~> 0.5.0"}
+    {:cloaked_req, "~> 0.6.0"}
   ]
 end
 ```
@@ -113,7 +113,7 @@ The client is garbage-collected by the BEAM when the pool struct is no longer re
 
 ## Impersonation profiles
 
-Profiles based on `wreq-util 3.0.0-rc.13`. Profile atoms with a dot must be quoted, e.g. `:"safari_17.4.1"`.
+Profiles based on `wreq-util 0.2.0`. Profile atoms with a dot must be quoted, e.g. `:"safari_17.4.1"`.
 
 ### Chrome
 

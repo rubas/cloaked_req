@@ -18,7 +18,8 @@ description: |
 | Step                         | Trigger           | Output                                            |
 | ---------------------------- | ----------------- | ------------------------------------------------- |
 | Bump `@version` in `mix.exs` | PR to `main`      | Release candidate commit                          |
-| Merge version bump to `main` | `release.yml`     | `vX.Y.Z` tag, GitHub release, and checksum commit |
+| Merge version bump to `main` | `release.yml`     | `vX.Y.Z` tag and GitHub release                   |
+| Refresh the checksum file    | PR to `main`      | `checksum-Elixir.CloakedReq.Native.exs`           |
 | Publish package              | `mix hex.publish` | Hex package and HexDocs docs                      |
 
 ## Version Bump Rules
@@ -36,20 +37,33 @@ After the version-bump PR is merged to `main`:
 1. `.github/workflows/release.yml` compares the current `mix.exs` version with `HEAD^`.
 2. If the version changed, the workflow ensures `vX.Y.Z` exists.
 3. The same workflow builds the precompiled NIF archives and publishes the GitHub release for `vX.Y.Z`.
-4. The same workflow rewrites `checksum-Elixir.CloakedReq.Native.exs` from the generated `SHA256SUMS`.
-5. The workflow commits the checksum update back to `main`.
+4. The workflow stops there. It does not touch `checksum-Elixir.CloakedReq.Native.exs`.
+
+`main` is a protected branch. It needs signed commits and a pull request. A
+workflow cannot push to it. Thus you refresh the checksum file by hand, with a
+pull request. The other NIF repositories do the same.
 
 Use the workflow's manual dispatch only to re-run a release for the current version tag after fixing workflow issues.
 
 ## Exact Hex Release Steps
 
-Run these steps only after the GitHub release for the same version exists, all NIF archives are attached, and the checksum update commit has landed on `main`.
+Run these steps only after the GitHub release for the same version exists, and all NIF archives are attached.
 
-### 1. Refresh local checkout after the checksum workflow commits back to `main`
+### 1. Refresh the checksum file and merge it to `main`
 
 ```bash
 jj git fetch
-jj rebase -o main
+jj new main@origin
+mix rustler_precompiled.download CloakedReq.Native --all --no-config --ignore-unavailable --print
+```
+
+The task downloads each asset from the GitHub release and verifies it. Commit
+the new `checksum-Elixir.CloakedReq.Native.exs`, open a pull request, and merge
+it. Then move your checkout to the new `main`:
+
+```bash
+jj git fetch
+jj new main@origin
 ```
 
 ### 2. Confirm the checksum file references the release you are about to publish

@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+### Changed
+
+- `release.yml` no longer writes and pushes `checksum-Elixir.CloakedReq.Native.exs`.
+  `main` is protected. It needs signed commits and a pull request, thus the push
+  always failed. The workflow now stops after the GitHub release. `RELEASE.md`
+  gives the manual step, the same as the other NIF repositories.
+
 ## [0.6.0] - 28.08.2026
 
 ### Fixed

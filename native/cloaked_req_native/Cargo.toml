@@ -26,3 +26,13 @@ unsafe_code = "forbid"
 [features]
 default = ["nif_version_2_17"]
 nif_version_2_17 = ["rustler/nif_version_2_17"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2

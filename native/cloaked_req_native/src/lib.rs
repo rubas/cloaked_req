@@ -13,7 +13,6 @@ use lru::LruCache;
 use request::{NativePoolConfig, NativeProxyConfig, NativeRequest};
 use response::NativeResponseMeta;
 use rustler::env::SavedTerm;
-use rustler::serde::SerdeTerm;
 use rustler::types::binary::{Binary, NewBinary};
 use rustler::{Encoder, Env, LocalPid, Monitor, OwnedEnv, ResourceArc, Term};
 use serde_json::{Value, json};
@@ -238,19 +237,14 @@ fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
 /// Builds a dedicated HTTP client with its own connection pool.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn nif_new_pool<'a>(env: Env<'a>, config: NativePoolConfig) -> Term<'a> {
-    match build_client(
+    build_client(
         config.emulation.as_deref(),
         config.insecure_skip_verify,
         config.connect_timeout_ms,
         config.pool_idle_timeout_ms,
-    ) {
-        Ok(client) => (ok(), ResourceArc::new(ClientResource { client })).encode(env),
-        Err(native_error) => {
-            let error_value =
-                serde_json::to_value(native_error).expect("NativeError must serialize");
-            (error(), SerdeTerm(error_value)).encode(env)
-        }
-    }
+    )
+    .map(|client| ResourceArc::new(ClientResource { client }))
+    .encode(env)
 }
 
 #[rustler::nif]
@@ -335,11 +329,7 @@ fn encode_request_result<'a>(
             let body_binary = Binary::from(new_bin);
             (ok(), meta, body_binary).encode(env)
         }
-        Err(native_error) => {
-            let error_value =
-                serde_json::to_value(native_error).expect("NativeError must serialize");
-            (error(), SerdeTerm(error_value)).encode(env)
-        }
+        Err(native_error) => (error(), native_error).encode(env),
     }
 }
 
@@ -521,7 +511,7 @@ fn execute_request(
     RUNTIME.block_on(execute_request_async(request, body, cookie_jar, pool))
 }
 
-fn transport_error(message: &str, reason: &wreq::Error) -> NativeError {
+fn transport_error(message: &'static str, reason: &wreq::Error) -> NativeError {
     let mut details = json!({"reason": reason.to_string(), "debug": format!("{reason:?}")});
     if let Some(kind) = transport_error_kind(reason) {
         details["kind"] = json!(kind);

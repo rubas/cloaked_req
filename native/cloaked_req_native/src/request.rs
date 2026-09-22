@@ -1,175 +1,32 @@
 use rustler::NifMap;
-use serde::Deserialize;
 
-fn default_timeout_ms() -> u64 {
-    30_000
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, Hash, NifMap, PartialEq)]
+#[derive(Debug, NifMap)]
+#[rustler(decode)]
 pub struct NativeProxyConfig {
     pub url: String,
-    #[serde(default)]
     pub headers: Vec<(String, String)>,
 }
 
-#[derive(Debug, Deserialize, NifMap)]
+#[derive(Debug, NifMap)]
+#[rustler(decode)]
 pub struct NativeRequest {
     pub method: String,
     pub url: String,
-    #[serde(default)]
     pub headers: Vec<(String, String)>,
-    #[serde(default = "default_timeout_ms")]
     pub receive_timeout_ms: u64,
-    #[serde(default = "default_timeout_ms")]
     pub connect_timeout_ms: u64,
-    #[serde(default)]
     pub proxy: Option<NativeProxyConfig>,
-    #[serde(default)]
     pub emulation: Option<String>,
-    #[serde(default)]
     pub insecure_skip_verify: bool,
-    #[serde(default)]
     pub max_body_size_bytes: Option<u64>,
-    #[serde(default)]
     pub local_address: Option<String>,
 }
 
-#[derive(Debug, Deserialize, NifMap)]
+#[derive(Debug, NifMap)]
+#[rustler(decode)]
 pub struct NativePoolConfig {
-    #[serde(default)]
     pub emulation: Option<String>,
-    #[serde(default)]
     pub insecure_skip_verify: bool,
-    #[serde(default = "default_timeout_ms")]
     pub connect_timeout_ms: u64,
-    #[serde(default)]
     pub pool_idle_timeout_ms: Option<u64>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::NativePoolConfig;
-    use super::NativeRequest;
-
-    #[test]
-    fn deserializes_minimal_pool_config_with_defaults() {
-        let config: NativePoolConfig =
-            serde_json::from_str(r#"{}"#).expect("config should deserialize");
-
-        assert!(config.emulation.is_none());
-        assert!(!config.insecure_skip_verify);
-        assert_eq!(config.connect_timeout_ms, 30_000);
-        assert!(config.pool_idle_timeout_ms.is_none());
-    }
-
-    #[test]
-    fn deserializes_full_pool_config_shape() {
-        let config: NativePoolConfig = serde_json::from_str(
-            r#"{
-              "emulation": "chrome_136",
-              "insecure_skip_verify": true,
-              "connect_timeout_ms": 2000,
-              "pool_idle_timeout_ms": 5000
-            }"#,
-        )
-        .expect("config should deserialize");
-
-        assert_eq!(config.emulation.as_deref(), Some("chrome_136"));
-        assert!(config.insecure_skip_verify);
-        assert_eq!(config.connect_timeout_ms, 2_000);
-        assert_eq!(config.pool_idle_timeout_ms, Some(5_000));
-    }
-
-    #[test]
-    fn deserializes_minimal_request_with_defaults() {
-        let request: NativeRequest = serde_json::from_str(
-            r#"{
-              "method": "GET",
-              "url": "https://example.com"
-            }"#,
-        )
-        .expect("request should deserialize");
-
-        assert_eq!(request.method, "GET");
-        assert_eq!(request.url, "https://example.com");
-        assert!(request.headers.is_empty());
-        assert_eq!(request.receive_timeout_ms, 30_000);
-        assert_eq!(request.connect_timeout_ms, 30_000);
-        assert!(request.proxy.is_none());
-        assert!(request.emulation.is_none());
-        assert!(!request.insecure_skip_verify);
-        assert!(request.max_body_size_bytes.is_none());
-        assert!(request.local_address.is_none());
-    }
-
-    #[test]
-    fn deserializes_full_request_shape() {
-        let request: NativeRequest = serde_json::from_str(
-            r#"{
-              "method": "POST",
-              "url": "https://example.com/path",
-              "headers": [["x-demo", "1"], ["content-type", "application/json"]],
-              "receive_timeout_ms": 5000,
-              "connect_timeout_ms": 2000,
-              "proxy": {
-                "url": "http://127.0.0.1:8888",
-                "headers": [["proxy-authorization", "Basic abc"]]
-              },
-              "emulation": "chrome_136",
-              "insecure_skip_verify": true,
-              "max_body_size_bytes": 10485760
-            }"#,
-        )
-        .expect("request should deserialize");
-
-        assert_eq!(request.method, "POST");
-        assert_eq!(request.url, "https://example.com/path");
-        assert_eq!(request.headers.len(), 2);
-        assert_eq!(request.receive_timeout_ms, 5_000);
-        assert_eq!(request.connect_timeout_ms, 2_000);
-        assert_eq!(
-            request.proxy.as_ref().map(|proxy| proxy.url.as_str()),
-            Some("http://127.0.0.1:8888")
-        );
-        assert_eq!(
-            request
-                .proxy
-                .as_ref()
-                .and_then(|proxy| proxy.headers.first())
-                .map(|(name, value)| (name.as_str(), value.as_str())),
-            Some(("proxy-authorization", "Basic abc"))
-        );
-        assert_eq!(request.emulation.as_deref(), Some("chrome_136"));
-        assert!(request.insecure_skip_verify);
-        assert_eq!(request.max_body_size_bytes, Some(10_485_760));
-        assert!(request.local_address.is_none());
-    }
-
-    #[test]
-    fn deserializes_ipv4_local_address() {
-        let request: NativeRequest = serde_json::from_str(
-            r#"{
-              "method": "GET",
-              "url": "https://example.com",
-              "local_address": "192.168.1.1"
-            }"#,
-        )
-        .expect("request should deserialize");
-
-        assert_eq!(request.local_address.as_deref(), Some("192.168.1.1"));
-    }
-
-    #[test]
-    fn deserializes_ipv6_local_address() {
-        let request: NativeRequest = serde_json::from_str(
-            r#"{
-              "method": "GET",
-              "url": "https://example.com",
-              "local_address": "::1"
-            }"#,
-        )
-        .expect("request should deserialize");
-
-        assert_eq!(request.local_address.as_deref(), Some("::1"));
-    }
 }

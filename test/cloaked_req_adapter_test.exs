@@ -53,16 +53,6 @@ defmodule CloakedReq.AdapterTest do
            }
   end
 
-  test "req bridge rejects streaming into adapters" do
-    request =
-      [url: "https://example.com", into: fn _chunk, acc -> {:cont, acc} end]
-      |> Req.new()
-      |> CloakedReq.attach()
-
-    assert {:error, %Error{type: :invalid_request, message: "streaming into is not supported by CloakedReq adapter"}} =
-             Request.to_native_payload(request)
-  end
-
   test "adapter returns adapter error on unsupported request shape" do
     request =
       [url: "https://example.com", into: fn _chunk, acc -> {:cont, acc} end]

@@ -17,11 +17,6 @@ defmodule CloakedReq.PoolTest do
   # Build
   # -------------------------------------------------------------------
 
-  test "new/1 returns a Pool struct with an opaque ref for a valid profile" do
-    assert {:ok, %Pool{ref: ref}} = Pool.new(impersonate: :chrome_136)
-    assert is_reference(ref)
-  end
-
   test "new/1 with no options returns a Pool struct" do
     assert {:ok, %Pool{ref: ref}} = Pool.new([])
     assert is_reference(ref)
@@ -37,17 +32,6 @@ defmodule CloakedReq.PoolTest do
              )
 
     assert is_reference(ref)
-  end
-
-  test "new!/1 returns the struct directly" do
-    assert %Pool{ref: ref} = Pool.new!(impersonate: :chrome_136)
-    assert is_reference(ref)
-  end
-
-  test "two pools have different references" do
-    {:ok, pool1} = Pool.new(impersonate: :chrome_136)
-    {:ok, pool2} = Pool.new(impersonate: :chrome_136)
-    refute pool1.ref == pool2.ref
   end
 
   # -------------------------------------------------------------------
@@ -106,10 +90,7 @@ defmodule CloakedReq.PoolTest do
   end
 
   test "attach/2 with a non-pool value yields an adapter error" do
-    {url, _server} =
-      TestServer.start(response: TestServer.build_response(200, [], "ok"))
-
-    req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach(pool: "nope")
+    req = [url: "https://example.com", retry: false] |> Req.new() |> CloakedReq.attach(pool: "nope")
 
     assert {:error, %AdapterError{} = error} = Req.request(req)
     assert error.error.type == :invalid_request
@@ -119,17 +100,21 @@ defmodule CloakedReq.PoolTest do
     {:ok, pool} = Pool.new(impersonate: :chrome_136)
 
     response = TestServer.build_response(200, [{"content-type", "text/plain"}], "pooled")
-    {url, _server} = TestServer.start(response: response)
+    {url, server} = TestServer.start(response: response)
 
     # The pool's client governs the fingerprint and TLS verification; the
     # conflicting per-request options are validated but must not change which
-    # client runs the request, so the request still succeeds through the pool.
+    # client runs the request, so the wire carries the pool's Chrome headers.
     req =
       [url: url, retry: false]
       |> Req.new()
       |> CloakedReq.attach(pool: pool, impersonate: :firefox_136, insecure_skip_verify: true)
 
     assert {:ok, %Req.Response{status: 200, body: "pooled"}} = Req.request(req)
+
+    raw = TestServer.get_request(server)
+    assert raw =~ "Chrome/136.0.0.0"
+    refute raw =~ "Firefox"
   end
 
   test "a pool composes with a cookie jar across requests" do

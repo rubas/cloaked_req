@@ -46,7 +46,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `RELEASE.md` uses git commands and a checksum step that always refreshes the new version.
 - `connect_options: [proxy_headers: ...]` accepts only a list of `{name, value}` pairs, the same as Mint. A map is rejected.
 - Responses no longer carry the private `:cloaked_req_url` key. wreq does not follow redirects, so it always held the request URL. Use `request.url` instead.
-- `CloakedReq.AdapterError.exception/1` accepts only a `%CloakedReq.Error{}`.
+- A `%CloakedReq.AdapterError{}` can only be built from a `%CloakedReq.Error{}`, not from a string.
 - README Limitations lists the Req options the adapter does not support.
 - Tests only. The `local_address` test binds `127.0.0.2`, so it fails when the option is lost. The public-suffix cookie test goes through a proxy, so it reaches the check. The pool test checks the pool's user-agent on the wire. The redirect cookie test checks the redirect target.
 - New test: a malformed response returns `%CloakedReq.AdapterError{}` and Req does not retry it.

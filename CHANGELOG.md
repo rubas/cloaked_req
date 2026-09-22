@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## Unreleased
+
+### Fixed
+
+- `:receive_timeout` was a total deadline for the whole request, so a download that took longer than 15 s failed with `:timeout` while data still arrived, and Req retried it. It now works like Req's Finch adapter: it bounds the wait for the response headers and then each wait for the next body chunk. The wait for the headers starts with the request, so it also includes DNS, connect, and TLS. A body that keeps arriving has no total limit.
+- The jar did not send its cookies to a URL that `http::Uri` rejects but wreq accepts, such as a path with a raw space. The jar now uses wreq's own cookie path, which works on the URI that wreq sends.
+- A cookie with a `Domain` equal to the request host was dropped when the host is itself a public suffix, such as `localhost` or a single-label intranet host. It is now kept, as RFC 6265 section 5.3 requires.
+- Response header values with bytes that are not UTF-8, such as a Latin-1 file name, reached Elixir with U+FFFD in place of those bytes. They now arrive as the raw bytes, the same as with Finch.
+- An invalid request header name or value returned `transport_error: request execution failed`. It now returns `invalid_request: invalid request`.
+
+### Changed
+
+- Over HTTP/2, the jar now sends one `cookie` field per cookie, not one joined field. RFC 9113 section 8.2.3 allows this, and wreq does it on its own cookie path. HTTP/1.1 requests still carry one `Cookie` header.
+- The adapter no longer stops waiting for the native reply after `receive_timeout + connect_timeout + 5 s`. The native task now replies on every path, a panic included, so this backstop is gone.
+- `%CloakedReq.Pool{}` no longer has a `:connect_timeout` field. The pool's client still uses the `:connect_timeout` option.
+- The `details` of a request body over `:max_body_size` now use string keys, `%{"size" => ..., "limit" => ...}`, the same as every other error. `CloakedReq.Error.type` is now typed as the closed set of error types.
+- The response body is copied once into the BEAM binary, not twice.
+- The NIF drops its direct `http` and `serde` dependencies.
+
 ## [0.7.0] - 22.09.2026
 
 ### Fixed

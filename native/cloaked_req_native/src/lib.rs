@@ -2,6 +2,7 @@ mod error;
 mod request;
 mod response;
 
+use std::any::Any;
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -246,7 +247,7 @@ fn nif_perform_request<'a>(
     let monitor = env.monitor(&cancellation, &caller);
 
     // Every path replies except an abort, which only a dead caller triggers.
-    // The panic is caught here, so the caller waits without a timeout.
+    // Panics are caught here, so the caller waits without a timeout.
     let task = async move {
         // A `&mut` borrow keeps the future Send: OwnedEnv is Send, not Sync.
         let body_env = &mut token_env;
@@ -265,31 +266,46 @@ fn nif_perform_request<'a>(
         })
         .catch_unwind()
         .await
-        .unwrap_or_else(|_| {
-            Err(NativeError::new(
-                "nif_panic",
-                "request task panicked",
-                json!({}),
-            ))
-        });
+        .unwrap_or_else(|payload| Err(panic_error(&*payload)));
 
         if let Some(monitor) = monitor {
             token_env.demonitor(&cancellation, &monitor);
         }
 
-        let _ = token_env.send_and_clear(&caller, |env| {
-            let token = saved_token.load(env);
-            (
-                cloaked_req_response(),
-                token,
-                encode_request_result(env, result),
-            )
-        });
+        let mut reply = |result| {
+            token_env.send_and_clear(&caller, |env| {
+                let token = saved_token.load(env);
+                (
+                    cloaked_req_response(),
+                    token,
+                    encode_request_result(env, result),
+                )
+            })
+        };
+
+        // A panic while encoding, such as a failed allocation for a large body,
+        // leaves the env uncleared, so the token still loads for a short reply.
+        if let Err(payload) = std::panic::catch_unwind(AssertUnwindSafe(|| reply(result))) {
+            let _ = reply(Err(panic_error(&*payload)));
+        }
     };
 
     RUNTIME.spawn(Abortable::new(task, abort_registration));
 
     ok().encode(env)
+}
+
+fn panic_error(payload: &(dyn Any + Send)) -> NativeError {
+    let reason = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or_default();
+    NativeError::new(
+        "nif_panic",
+        "request task panicked",
+        json!({"reason": reason}),
+    )
 }
 
 fn encode_request_result<'a>(
@@ -1134,5 +1150,13 @@ mod tests {
             extract_cookie_domain("session=abc; nï=1; Domain=test.com"),
             Some("test.com")
         );
+    }
+
+    #[test]
+    fn panic_error_keeps_the_panic_message() {
+        let payload = std::panic::catch_unwind(|| panic!("boom")).expect_err("panics");
+        assert_eq!(panic_error(&*payload).details["reason"], "boom");
+        let payload = std::panic::catch_unwind(|| panic!("boom {}", 1)).expect_err("panics");
+        assert_eq!(panic_error(&*payload).details["reason"], "boom 1");
     }
 }

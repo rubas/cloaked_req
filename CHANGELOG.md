@@ -17,7 +17,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Changed
 
 - Over HTTP/2, the jar now sends one `cookie` field per cookie, not one joined field. RFC 9113 section 8.2.3 allows this, and wreq does it on its own cookie path. HTTP/1.1 requests still carry one `Cookie` header.
-- The adapter no longer stops waiting for the native reply after `receive_timeout + connect_timeout + 5 s`. The native task now replies on every path, a panic included, so this backstop is gone.
+- The adapter no longer stops waiting for the native reply after `receive_timeout + connect_timeout + 5 s`. The native task now replies on every path, a panic included, so this backstop is gone. A `:nif_panic` error now carries the panic message in `details["reason"]`.
 - `%CloakedReq.Pool{}` no longer has a `:connect_timeout` field. The pool's client still uses the `:connect_timeout` option.
 - The `details` of a request body over `:max_body_size` now use string keys, `%{"size" => ..., "limit" => ...}`, the same as every other error. `CloakedReq.Error.type` is now typed as the closed set of error types.
 - The response body is copied once into the BEAM binary, not twice.

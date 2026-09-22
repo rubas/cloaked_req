@@ -25,12 +25,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake golang-go
-
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
+          components: clippy, rustfmt
 
       - name: Cache Rust
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -39,8 +37,35 @@ jobs:
           key: rust-test-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
           restore-keys: rust-test-
 
+      - name: Rust formatting
+        run: cargo fmt --check --manifest-path native/cloaked_req_native/Cargo.toml
+
+      - name: Clippy
+        run: cargo clippy --manifest-path native/cloaked_req_native/Cargo.toml --all-targets -- -D warnings
+
       - name: Rust tests
         run: cargo test --manifest-path native/cloaked_req_native/Cargo.toml
+
+  zizmor:
+    if: github.event_name == 'push' || github.event.pull_request.user.login == github.repository_owner
+    name: zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # check out the repository
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-zizmor
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lint workflows
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/zizmor.tar.gz" https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          echo "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a  $RUNNER_TEMP/zizmor.tar.gz" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/zizmor.tar.gz" -C "$RUNNER_TEMP" zizmor
+          "$RUNNER_TEMP/zizmor" --offline --persona=pedantic .github/workflows
 
   test:
     if: github.event_name == 'push' || github.event.pull_request.user.login == github.repository_owner
@@ -61,22 +86,12 @@ jobs:
           - otp: "29.0"
             elixir: "1.20.2"
             version-type: "strict"
+            audit: true
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Install zizmor
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz \
-            | tar -xz -C "$HOME/.local/bin" zizmor
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake golang-go
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
@@ -109,7 +124,7 @@ jobs:
           mix deps.get
 
       - name: Compile
-        run: MIX_ENV=test mix compile
+        run: MIX_ENV=test mix compile --warnings-as-errors
 
       - name: Check formatting
         run: MIX_ENV=test mix format --check-formatted --dry-run
@@ -117,10 +132,17 @@ jobs:
       - name: Credo
         run: MIX_ENV=test mix credo --strict
 
+      # The audits do not depend on the OTP version, so one leg runs them.
+      - name: Audit Hex dependencies
+        if: matrix.audit
+        run: MIX_ENV=test mix deps.audit
+
+      - name: Sobelow
+        if: matrix.audit
+        run: MIX_ENV=test mix sobelow --config --exit
+
       - name: Dialyzer
         run: MIX_ENV=test mix dialyzer
 
       - name: Elixir tests
         run: MIX_ENV=test mix test --color
-
-      - run: zizmor --offline --persona=pedantic .github/workflows

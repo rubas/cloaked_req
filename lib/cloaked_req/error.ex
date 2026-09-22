@@ -6,8 +6,10 @@ defmodule CloakedReq.Error do
   @enforce_keys [:type, :message]
   defstruct [:type, :message, details: %{}]
 
+  @type type :: :invalid_request | :transport_error | :nif_panic
+
   @type t :: %__MODULE__{
-          type: atom(),
+          type: type(),
           message: String.t(),
           details: map()
         }
@@ -21,7 +23,7 @@ defmodule CloakedReq.Error do
       iex> err.type
       :invalid_request
   """
-  @spec new(atom(), String.t(), map()) :: t()
+  @spec new(type(), String.t(), map()) :: t()
   def new(type, message, details \\ %{}) when is_atom(type) and is_binary(message) and is_map(details) do
     %__MODULE__{type: type, message: message, details: details}
   end

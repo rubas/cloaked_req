@@ -72,7 +72,7 @@ defmodule CloakedReq.PoolTest do
   end
 
   test "a duplicated option keeps the last value" do
-    assert {:ok, %Pool{connect_timeout: 5_000}} = Pool.new(connect_timeout: 1_000, connect_timeout: 5_000)
+    assert {:ok, %Pool{}} = Pool.new(impersonate: :not_a_profile, impersonate: :chrome_136)
   end
 
   test "a non-keyword entry is rejected" do

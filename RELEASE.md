@@ -26,7 +26,7 @@ description: |
 
 - Bump [mix.exs](mix.exs) `@version` only when that merge should create a release.
 - Update [CHANGELOG.md](CHANGELOG.md) in the same PR.
-- Keep [native/cloaked_req_native/Cargo.toml](native/cloaked_req_native/Cargo.toml) in sync with the release version when you want Rust metadata to match the Elixir package.
+- Set `version` in [native/cloaked_req_native/Cargo.toml](native/cloaked_req_native/Cargo.toml) to the new `@version`.
 - Keep [README.md](README.md) current: the install snippet's `~> X.Y` constraint must cover `@version`, and when `wreq-util` is bumped, refresh the version reference and the impersonation-profile list against the new `Profile` enum.
 - No version change means no tag and no GitHub release.
 
@@ -41,9 +41,9 @@ After the version-bump PR is merged to `main`:
 
 `main` is a protected branch. It needs signed commits and a pull request. A
 workflow cannot push to it. Thus you refresh the checksum file by hand, with a
-pull request. The other NIF repositories do the same.
+pull request.
 
-Use the workflow's manual dispatch only to re-run a release for the current version tag after fixing workflow issues.
+Use the workflow's manual dispatch only to re-run a release for the current version tag after fixing workflow issues. The dispatch builds the code at that tag and fails when the tag does not exist.
 
 ## Exact Hex Release Steps
 
@@ -52,27 +52,28 @@ Run these steps only after the GitHub release for the same version exists, and a
 ### 1. Refresh the checksum file and merge it to `main`
 
 ```bash
-jj git fetch
-jj new main@origin
-mix rustler_precompiled.download CloakedReq.Native --all --no-config --ignore-unavailable --print
+git fetch origin
+git switch -c checksum-vX.Y.Z origin/main
+CLOAKED_REQ_BUILD=1 mix rustler_precompiled.download CloakedReq.Native --all
 ```
 
-The task downloads each asset from the GitHub release and verifies it. Commit
-the new `checksum-Elixir.CloakedReq.Native.exs`, open a pull request, and merge
-it. Then move your checkout to the new `main`:
+The task compiles the new `@version`, downloads each asset from the GitHub
+release, and verifies it. It fails when an asset is missing. Commit the new
+`checksum-Elixir.CloakedReq.Native.exs`, open a pull request, and merge it. Then
+move your checkout to the new `main`:
 
 ```bash
-jj git fetch
-jj new main@origin
+git fetch origin
+git switch --detach origin/main
 ```
 
 ### 2. Confirm the checksum file references the release you are about to publish
 
 ```bash
-rg 'v0\\.3\\.1' checksum-Elixir.CloakedReq.Native.exs
+rg -F 'vX.Y.Z' checksum-Elixir.CloakedReq.Native.exs
 ```
 
-Replace `0.3.1` with the version you are releasing. The checksum file must reference the same GitHub release assets as `@version`.
+Replace `X.Y.Z` with the version you are releasing. The checksum file must reference the same GitHub release assets as `@version`.
 
 ### 3. Verify the package from the exact publishing tree
 

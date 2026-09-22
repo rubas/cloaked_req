@@ -83,7 +83,7 @@ defmodule CloakedReq.Request do
     size = :erlang.iolist_size(body)
 
     if max && size > max do
-      {:error, Error.new(:invalid_request, "request body exceeds max_body_size", %{size: size, limit: max})}
+      {:error, Error.new(:invalid_request, "request body exceeds max_body_size", %{"size" => size, "limit" => max})}
     else
       {:ok, IO.iodata_to_binary(body)}
     end

@@ -25,12 +25,10 @@ tasks:
 
   fix:
     desc: Auto-fix formatting and linting issues
-    deps: [fix:elixir]
-
-  fix:elixir:
     deps: [compile]
     cmds:
       - mix format
+      - cargo fmt --manifest-path native/cloaked_req_native/Cargo.toml
 
   test:
     desc: Run all checks and tests
@@ -43,20 +41,16 @@ tasks:
       - MIX_ENV=test mix compile --warnings-as-errors
 
   test:format:
-    deps: [test:format:elixir]
-
-  test:format:elixir:
     deps: [compile]
     cmds:
       - MIX_ENV=test mix format --check-formatted --dry-run
+      - cargo fmt --check --manifest-path native/cloaked_req_native/Cargo.toml
 
   test:lint:
-    deps: [test:lint:elixir]
-
-  test:lint:elixir:
     deps: [compile]
     cmds:
       - MIX_ENV=test mix credo --strict
+      - cargo clippy --manifest-path native/cloaked_req_native/Cargo.toml --all-targets -- -D warnings
 
   test:types:
     deps: [compile]

@@ -8,12 +8,32 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- `:receive_timeout` was a total deadline for the whole request, so a download that took longer than 15 s failed with `:timeout` while data still arrived, and Req retried it. It now restarts after each body chunk. The README states the full rule.
+- The jar did not send its cookies to a URL that `http::Uri` rejects but wreq accepts, such as a path with a raw space. The jar now uses wreq's own cookie path, which works on the URI that wreq sends.
+- A cookie with a `Domain` equal to the request host was dropped when the host is itself a public suffix, such as `localhost` or a single-label intranet host. It is now kept as a host-only cookie, as RFC 6265 section 5.3 requires.
+- Response header values with bytes that are not UTF-8, such as a Latin-1 file name, reached Elixir with U+FFFD in place of those bytes. They now arrive as the raw bytes, the same as with Finch.
+- A `set-cookie` header with two `Domain` attributes passed the public suffix check on the first one, but the jar stored the last one. So `Domain=example.com; Domain=com` from `www.example.com` set a cookie that the jar sent to every `.com` host. The check now reads the cookie the same way the jar does.
+- An invalid request header name or value returned `transport_error: request execution failed`. It now returns `invalid_request: invalid request`.
+- The x86_64 Linux NIF of 0.7.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. Ubuntu 22.04 ships glibc 2.35, so a release check holds the floor: it fails when a NIF needs a glibc newer than 2.34.
+- A manual release dispatch built `main` but published the files under the given tag. It now builds the tag, and it fails when the tag does not exist.
+- HexDocs "View source" links point to the release tag, not to `main`.
 - `:local_address` accepted strings such as `"127.1"` that the NIF then rejected. The adapter now sends the canonical form, for example `"127.0.0.1"`. An address with an IPv6 scope such as `"fe80::1%eth0"` is still rejected, because the bind would drop the scope.
 - A proxy with an IPv6 host such as `{:http, "::1", 8080, []}` failed with `invalid proxy URL`. The adapter now brackets a bare IPv6 host and keeps a bracketed one such as `"[::1]"` as is.
 - `CloakedReq.Pool.new/1` ignored unknown options, so a typo such as `impersonation:` built a pool without a profile. It now returns an `:invalid_request` error that names the unknown keys. A duplicated key keeps its last value, like Req, and a list that is not a keyword list returns an `:invalid_request` error.
 
 ### Changed
 
+- Over HTTP/2, the jar now sends one `cookie` field per cookie, not one joined field. RFC 9113 section 8.2.3 allows this, and wreq does it on its own cookie path. HTTP/1.1 requests still carry one `Cookie` header.
+- The adapter no longer stops waiting for the native reply after `receive_timeout + connect_timeout + 5 s`. The native task now replies on every path, a panic included, so this backstop is gone. A `:nif_panic` error now carries the panic message in `details["reason"]`.
+- `%CloakedReq.Pool{}` no longer has a `:connect_timeout` field. The pool's client still uses the `:connect_timeout` option.
+- The `details` of a request body over `:max_body_size` now use string keys, `%{"size" => ..., "limit" => ...}`, the same as every other error. `CloakedReq.Error.type` is now typed as the closed set of error types.
+- The response body is copied once into the BEAM binary, not twice.
+- The NIF drops its direct `http` and `serde` dependencies.
+- The release NIFs are stripped. The x86_64 download is about 9% smaller.
+- The aarch64 Linux NIF builds natively on an arm runner instead of with a cross toolchain.
+- CI now runs `cargo fmt --check`, clippy, `mix deps.audit`, and sobelow, and it compiles with `--warnings-as-errors`, the same as `task check`.
+- README lists the precompiled targets and the steps to build the NIF from source.
+- `RELEASE.md` uses git commands and a checksum step that always refreshes the new version.
 - `connect_options: [proxy_headers: ...]` accepts only a list of `{name, value}` pairs, the same as Mint. A map is rejected.
 - Responses no longer carry the private `:cloaked_req_url` key. wreq does not follow redirects, so it always held the request URL. Use `request.url` instead.
 - `CloakedReq.AdapterError.exception/1` accepts only a `%CloakedReq.Error{}`.

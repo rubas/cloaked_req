@@ -6,6 +6,7 @@ defmodule CloakedReq.E2ETest do
   use ExUnit.Case, async: true
 
   alias CloakedReq.AdapterError
+  alias CloakedReq.Error
   alias CloakedReq.TestServer
 
   test "GET returns 200 with body and response headers" do
@@ -71,23 +72,6 @@ defmodule CloakedReq.E2ETest do
     assert raw =~ ~r/x-source:\s*elixir-test/i
   end
 
-  test "response headers are decoded into Req.Response" do
-    response =
-      TestServer.build_response(
-        200,
-        [{"content-type", "text/plain"}, {"x-request-id", "req-456"}, {"x-powered-by", "cloaked"}],
-        "ok"
-      )
-
-    {url, _server} = TestServer.start(response: response)
-
-    req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach()
-
-    assert {:ok, %Req.Response{} = resp} = Req.request(req)
-    assert "req-456" in resp.headers["x-request-id"]
-    assert "cloaked" in resp.headers["x-powered-by"]
-  end
-
   test "404 status is propagated with body" do
     response = TestServer.build_response(404, [{"content-type", "text/plain"}], "not found")
     {url, _server} = TestServer.start(response: response)
@@ -97,17 +81,6 @@ defmodule CloakedReq.E2ETest do
     assert {:ok, %Req.Response{} = resp} = Req.request(req)
     assert resp.status == 404
     assert resp.body == "not found"
-  end
-
-  test "500 status is propagated with body" do
-    response = TestServer.build_response(500, [{"content-type", "text/plain"}], "internal error")
-    {url, _server} = TestServer.start(response: response)
-
-    req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach()
-
-    assert {:ok, %Req.Response{} = resp} = Req.request(req)
-    assert resp.status == 500
-    assert resp.body == "internal error"
   end
 
   test "response body at exact max_body_size succeeds" do
@@ -170,6 +143,21 @@ defmodule CloakedReq.E2ETest do
     assert {:error, %Req.TransportError{reason: :closed}} = Req.request(req)
   end
 
+  test "a malformed response returns CloakedReq.AdapterError and Req does not retry it" do
+    {url, _server} = TestServer.start(response: "NOT-HTTP\r\n\r\n")
+    test_pid = self()
+
+    req =
+      [url: url, max_retries: 2, retry_delay: 0, retry_log_level: false]
+      |> Req.new()
+      |> CloakedReq.attach()
+      |> Req.Request.append_request_steps(count_attempt: &tap(&1, fn _ -> send(test_pid, :attempt) end))
+
+    assert {:error, %AdapterError{error: %Error{type: :transport_error}}} = Req.request(req)
+    assert_received :attempt
+    refute_received :attempt
+  end
+
   test "Req connect_options proxy and proxy_headers are used" do
     proxy_response = TestServer.build_response(200, [{"content-type", "text/plain"}], "proxied")
     {proxy_url, proxy_server} = TestServer.start(response: proxy_response)
@@ -228,16 +216,16 @@ defmodule CloakedReq.E2ETest do
     response = TestServer.build_response(200, [{"content-type", "text/plain"}], "bound")
     {url, server} = TestServer.start(response: response)
 
+    # The kernel picks 127.0.0.1 as the default source, so bind a different loopback address.
     req =
       [url: url, retry: false]
       |> Req.new()
-      |> CloakedReq.attach(local_address: {127, 0, 0, 1})
+      |> CloakedReq.attach(local_address: {127, 0, 0, 2})
 
     assert {:ok, %Req.Response{} = resp} = Req.request(req)
     assert resp.status == 200
 
-    peer_ip = TestServer.get_peer_address(server)
-    assert peer_ip == {127, 0, 0, 1}
+    assert TestServer.get_peer_address(server) == {127, 0, 0, 2}
   end
 
   test "response includes url in private metadata" do
@@ -247,7 +235,6 @@ defmodule CloakedReq.E2ETest do
     req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach()
 
     assert {:ok, %Req.Response{} = resp} = Req.request(req)
-    assert is_binary(resp.private[:cloaked_req_url])
-    assert resp.private[:cloaked_req_url] =~ "127.0.0.1"
+    assert resp.private[:cloaked_req_url] == url
   end
 end

@@ -133,8 +133,8 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             native/cloaked_req_native/target
-          key: release-${{ matrix.target }}-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
-          restore-keys: release-${{ matrix.target }}-
+          key: release-${{ matrix.target }}-${{ matrix.runner }}-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
+          restore-keys: release-${{ matrix.target }}-${{ matrix.runner }}-
 
       - name: Build NIF
         working-directory: native/cloaked_req_native

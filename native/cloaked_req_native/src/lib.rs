@@ -851,6 +851,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reaches thumbprint.me; run with task test:rust:external"]
     fn fingerprint_smoke_test_with_emulation() {
         let request = NativeRequest {
             method: "GET".to_string(),

@@ -3,8 +3,6 @@ mod request;
 mod response;
 
 use std::num::NonZeroUsize;
-#[cfg(test)]
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -119,24 +117,6 @@ impl rustler::Resource for RequestCancellationResource {
 
     fn down<'a>(&'a self, _env: Env<'a>, _pid: LocalPid, _monitor: Monitor) {
         self.abort();
-    }
-}
-
-#[cfg(test)]
-fn run_with_panic_protection<T, F>(f: F) -> Result<T, NativeError>
-where
-    F: FnOnce() -> Result<T, NativeError>,
-{
-    match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(result) => result,
-        Err(panic_info) => {
-            let message = panic_info
-                .downcast_ref::<String>()
-                .map(|s| s.as_str())
-                .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown panic");
-            Err(NativeError::new("nif_panic", message, json!({})))
-        }
     }
 }
 
@@ -1064,42 +1044,6 @@ mod tests {
                 assert_eq!(err.type_name, "transport_error");
             }
         }
-    }
-
-    #[test]
-    fn panic_protection_converts_panic_to_nif_panic_error() {
-        let result = run_with_panic_protection::<(), _>(|| {
-            panic!("simulated NIF panic");
-        });
-        let err = result.unwrap_err();
-        assert_eq!(err.type_name, "nif_panic");
-        assert_eq!(err.message, "simulated NIF panic");
-    }
-
-    #[test]
-    fn panic_protection_passes_through_ok() {
-        let result = run_with_panic_protection(|| {
-            Ok((
-                NativeResponseMeta {
-                    status: 200,
-                    url: "https://example.com".to_string(),
-                    headers: vec![],
-                },
-                Vec::<u8>::new(),
-            ))
-        });
-        let (meta, body) = result.unwrap();
-        assert_eq!(meta.status, 200);
-        assert!(body.is_empty());
-    }
-
-    #[test]
-    fn panic_protection_passes_through_err() {
-        let result = run_with_panic_protection::<(), _>(|| {
-            Err(NativeError::new("transport_error", "timeout", json!({})))
-        });
-        let err = result.unwrap_err();
-        assert_eq!(err.type_name, "transport_error");
     }
 
     // --- local_address tests ---

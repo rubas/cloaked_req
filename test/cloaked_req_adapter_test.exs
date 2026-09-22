@@ -185,6 +185,26 @@ defmodule CloakedReq.AdapterTest do
              Request.to_native_payload(request)
   end
 
+  test "IPv6 proxy host is bracketed in the proxy URL" do
+    request =
+      [url: "https://example.com", connect_options: [proxy: {:http, "::1", 8080, []}]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:proxy] == %{url: "http://[::1]:8080", headers: []}
+  end
+
+  test "bracketed IPv6 proxy host is kept as is in the proxy URL" do
+    request =
+      [url: "https://example.com", connect_options: [proxy: {:http, "[::1]", 8080, []}]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:proxy] == %{url: "http://[::1]:8080", headers: []}
+  end
+
   test "proxy_headers without proxy returns error" do
     request =
       [url: "https://example.com", connect_options: [proxy_headers: [{"proxy-authorization", "Basic token"}]]]
@@ -192,6 +212,36 @@ defmodule CloakedReq.AdapterTest do
       |> CloakedReq.attach()
 
     assert {:error, %Error{type: :invalid_request, message: "connect_options proxy_headers require proxy"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "proxy_headers map returns error" do
+    request =
+      [
+        url: "https://example.com",
+        connect_options: [
+          proxy: {:http, "127.0.0.1", 8888, []},
+          proxy_headers: %{"proxy-authorization" => "Basic token"}
+        ]
+      ]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error, %Error{type: :invalid_request, message: "connect_options proxy_headers must be a list"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "proxy_headers with a non-binary value returns error" do
+    request =
+      [
+        url: "https://example.com",
+        connect_options: [proxy: {:http, "127.0.0.1", 8888, []}, proxy_headers: [{"proxy-authorization", :token}]]
+      ]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error,
+            %Error{type: :invalid_request, message: "connect_options proxy_headers must be binary header pairs"}} =
              Request.to_native_payload(request)
   end
 
@@ -370,14 +420,14 @@ defmodule CloakedReq.AdapterTest do
     assert payload[:local_address] == "::1"
   end
 
-  test "local_address string is passed through" do
+  test "local_address string is sent in canonical form" do
     request =
       [url: "https://example.com"]
       |> Req.new()
-      |> CloakedReq.attach(local_address: "10.0.0.1")
+      |> CloakedReq.attach(local_address: "127.1")
 
     assert {:ok, {payload, _body}} = Request.to_native_payload(request)
-    assert payload[:local_address] == "10.0.0.1"
+    assert payload[:local_address] == "127.0.0.1"
   end
 
   test "nil local_address produces nil in payload" do
@@ -395,6 +445,16 @@ defmodule CloakedReq.AdapterTest do
       [url: "https://example.com"]
       |> Req.new()
       |> CloakedReq.attach(local_address: "not-an-ip")
+
+    assert {:error, %Error{type: :invalid_request, message: "local_address is not a valid IP address"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "local_address with an IPv6 scope returns error" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: "fe80::1%eth0")
 
     assert {:error, %Error{type: :invalid_request, message: "local_address is not a valid IP address"}} =
              Request.to_native_payload(request)
@@ -437,46 +497,15 @@ defmodule CloakedReq.AdapterTest do
   # Response decoding: from_native/2
   # -------------------------------------------------------------------
 
-  test "from_native/2 rejects missing status key" do
-    assert {:error, %Error{type: :invalid_native_response}} =
-             Response.from_native(%{headers: []}, "")
-  end
-
-  test "from_native/2 rejects non-integer status" do
-    assert {:error, %Error{type: :invalid_native_response}} =
-             Response.from_native(%{status: "200", headers: []}, "")
-  end
-
-  test "from_native/2 round-trips a valid response" do
+  test "from_native/2 builds a Req response from status, headers, and body" do
     meta = %{
       status: 200,
       headers: [{"content-type", "text/plain"}]
     }
 
-    assert {:ok, %Req.Response{} = response} = Response.from_native(meta, "ok")
+    assert %Req.Response{} = response = Response.from_native(meta, "ok")
     assert response.status == 200
     assert response.body == "ok"
     assert response.headers["content-type"] == ["text/plain"]
-  end
-
-  test "from_native/2 maps url to private when present" do
-    meta = %{
-      status: 200,
-      url: "http://127.0.0.1:9999/",
-      headers: []
-    }
-
-    assert {:ok, %Req.Response{} = response} = Response.from_native(meta, "ok")
-    assert response.private[:cloaked_req_url] == "http://127.0.0.1:9999/"
-  end
-
-  test "from_native/2 omits url private when url is missing" do
-    meta = %{
-      status: 200,
-      headers: []
-    }
-
-    assert {:ok, %Req.Response{} = response} = Response.from_native(meta, "ok")
-    refute Map.has_key?(response.private, :cloaked_req_url)
   end
 end

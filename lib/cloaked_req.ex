@@ -2,9 +2,9 @@ defmodule CloakedReq do
   @moduledoc """
   Req adapter powered by Rust `wreq`.
 
-  - `attach/2` — set adapter and merge options
-  - `impersonate/2` — set browser profile
-  - `run/1` — adapter entry point, called by Req
+  - `attach/2`: set adapter and merge options
+  - `impersonate/2`: set browser profile
+  - `run/1`: adapter entry point, called by Req
   """
 
   alias CloakedReq.AdapterError
@@ -97,9 +97,8 @@ defmodule CloakedReq do
          pool_ref = if(pool, do: pool.ref),
          {:ok, {payload, body}} <- Request.to_native_payload(request),
          {:ok, response_meta, response_body} <-
-           Native.perform_request(payload, body, jar_ref, pool_ref),
-         {:ok, req_response} <- Response.from_native(response_meta, response_body) do
-      {request, req_response}
+           Native.perform_request(payload, body, jar_ref, pool_ref) do
+      {request, Response.from_native(response_meta, response_body)}
     else
       {:error, %Error{type: :transport_error, details: %{"kind" => kind}}} ->
         {request, %Req.TransportError{reason: transport_reason(kind)}}

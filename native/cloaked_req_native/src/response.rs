@@ -20,6 +20,5 @@ impl Encoder for RawHeaderValue {
 #[rustler(encode)]
 pub struct NativeResponseMeta {
     pub status: u16,
-    pub url: String,
     pub headers: Vec<(String, RawHeaderValue)>,
 }

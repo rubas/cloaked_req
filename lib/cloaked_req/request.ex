@@ -13,7 +13,7 @@ defmodule CloakedReq.Request do
 
   @default_max_body_size 10_485_760
   @default_connect_timeout 30_000
-  @supported_connect_options MapSet.new([:timeout, :proxy, :proxy_headers])
+  @supported_connect_options [:timeout, :proxy, :proxy_headers]
 
   @doc """
   Builds a native payload tuple from a `Req.Request`.
@@ -79,15 +79,6 @@ defmodule CloakedReq.Request do
   @spec normalize_body(term(), pos_integer() | nil) :: {:ok, nil | binary()} | {:error, Error.t()}
   defp normalize_body(nil, _max), do: {:ok, nil}
 
-  defp normalize_body(body, max) when is_binary(body) do
-    if max && byte_size(body) > max do
-      {:error,
-       Error.new(:invalid_request, "request body exceeds max_body_size", %{"size" => byte_size(body), "limit" => max})}
-    else
-      {:ok, body}
-    end
-  end
-
   defp normalize_body(body, max) do
     size = :erlang.iolist_size(body)
 
@@ -102,10 +93,8 @@ defmodule CloakedReq.Request do
   end
 
   @spec flatten_headers(map()) :: [{String.t(), String.t()}]
-  defp flatten_headers(headers) when is_map(headers) do
-    Enum.flat_map(headers, fn {name, values} ->
-      for value <- List.wrap(values), do: {name, value}
-    end)
+  defp flatten_headers(headers) do
+    for {name, values} <- headers, value <- values, do: {name, value}
   end
 
   @doc """
@@ -155,7 +144,7 @@ defmodule CloakedReq.Request do
       options
       |> Keyword.keys()
       |> Enum.uniq()
-      |> Enum.reject(&MapSet.member?(@supported_connect_options, &1))
+      |> Enum.reject(&(&1 in @supported_connect_options))
 
     case unsupported do
       [] ->
@@ -191,12 +180,10 @@ defmodule CloakedReq.Request do
 
   defp normalize_proxy({scheme, host, port, []}, headers)
        when scheme in [:http, :https] and is_binary(host) and is_integer(port) and port > 0 do
+    host = if String.contains?(host, ":") and not String.starts_with?(host, "["), do: "[#{host}]", else: host
+
     with {:ok, proxy_headers} <- normalize_proxy_headers(headers) do
-      {:ok,
-       %{
-         url: "#{scheme}://#{host}:#{port}",
-         headers: proxy_headers
-       }}
+      {:ok, %{url: "#{scheme}://#{host}:#{port}", headers: proxy_headers}}
     end
   end
 
@@ -210,29 +197,15 @@ defmodule CloakedReq.Request do
 
   @spec normalize_proxy_headers(term()) :: {:ok, [{String.t(), String.t()}]} | {:error, Error.t()}
   defp normalize_proxy_headers(headers) when is_list(headers) do
-    result =
-      Enum.reduce_while(headers, {:ok, []}, fn
-        {name, value}, {:ok, acc} when is_binary(name) and is_binary(value) ->
-          {:cont, {:ok, [{name, value} | acc]}}
-
-        _header, _acc ->
-          {:halt, {:error, Error.new(:invalid_request, "connect_options proxy_headers must be binary header pairs")}}
-      end)
-
-    case result do
-      {:ok, normalized} -> {:ok, Enum.reverse(normalized)}
-      error -> error
+    if Enum.all?(headers, &match?({name, value} when is_binary(name) and is_binary(value), &1)) do
+      {:ok, headers}
+    else
+      {:error, Error.new(:invalid_request, "connect_options proxy_headers must be binary header pairs")}
     end
   end
 
-  defp normalize_proxy_headers(headers) when is_map(headers) do
-    headers
-    |> flatten_headers()
-    |> normalize_proxy_headers()
-  end
-
   defp normalize_proxy_headers(_headers) do
-    {:error, Error.new(:invalid_request, "connect_options proxy_headers must be a list or map")}
+    {:error, Error.new(:invalid_request, "connect_options proxy_headers must be a list")}
   end
 
   @doc """
@@ -251,23 +224,15 @@ defmodule CloakedReq.Request do
   @spec normalize_local_address(term()) :: {:ok, nil | String.t()} | {:error, Error.t()}
   defp normalize_local_address(nil), do: {:ok, nil}
 
-  defp normalize_local_address({a, b, c, d} = addr)
-       when is_integer(a) and is_integer(b) and is_integer(c) and is_integer(d) do
-    ntoa_to_string(addr)
-  end
+  defp normalize_local_address(addr) when is_tuple(addr), do: ntoa_to_string(addr)
 
-  defp normalize_local_address({a, b, c, d, e, f, g, h} = addr)
-       when is_integer(a) and is_integer(b) and is_integer(c) and is_integer(d) and is_integer(e) and is_integer(f) and
-              is_integer(g) and is_integer(h) do
-    ntoa_to_string(addr)
-  end
-
+  # :inet.parse_address/1 accepts an IPv6 scope such as "%eth0" and drops it, so reject it here.
   defp normalize_local_address(value) when is_binary(value) do
-    charlist = String.to_charlist(value)
-
-    case :inet.parse_address(charlist) do
-      {:ok, _addr} -> {:ok, value}
-      {:error, _} -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}
+    with false <- String.contains?(value, "%"),
+         {:ok, addr} <- value |> String.to_charlist() |> :inet.parse_address() do
+      ntoa_to_string(addr)
+    else
+      _ -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}
     end
   end
 
@@ -275,7 +240,7 @@ defmodule CloakedReq.Request do
     {:error, Error.new(:invalid_request, "local_address must be an IP address string or tuple")}
   end
 
-  @spec ntoa_to_string(:inet.ip_address()) :: {:ok, String.t()} | {:error, Error.t()}
+  @spec ntoa_to_string(tuple()) :: {:ok, String.t()} | {:error, Error.t()}
   defp ntoa_to_string(addr) do
     case :inet.ntoa(addr) do
       {:error, _} -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}

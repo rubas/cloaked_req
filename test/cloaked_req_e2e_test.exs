@@ -238,14 +238,4 @@ defmodule CloakedReq.E2ETest do
 
     assert TestServer.get_peer_address(server) == {127, 0, 0, 2}
   end
-
-  test "response includes url in private metadata" do
-    response = TestServer.build_response(200, [{"content-type", "text/plain"}], "ok")
-    {url, _server} = TestServer.start(response: response)
-
-    req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach()
-
-    assert {:ok, %Req.Response{} = resp} = Req.request(req)
-    assert resp.private[:cloaked_req_url] == url
-  end
 end

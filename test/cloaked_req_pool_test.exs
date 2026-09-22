@@ -66,6 +66,20 @@ defmodule CloakedReq.PoolTest do
     assert {:error, %Error{type: :invalid_request}} = Pool.new(pool_idle_timeout: -1)
   end
 
+  test "unknown option is rejected with its name" do
+    assert {:error, %Error{type: :invalid_request, message: "unknown pool options: :impersonation"}} =
+             Pool.new(impersonation: :chrome_136)
+  end
+
+  test "a duplicated option keeps the last value" do
+    assert {:ok, %Pool{}} = Pool.new(impersonate: :not_a_profile, impersonate: :chrome_136)
+  end
+
+  test "a non-keyword entry is rejected" do
+    assert {:error, %Error{type: :invalid_request, message: "pool options must be a keyword list"}} =
+             Pool.new([{"impersonate", :chrome_136}])
+  end
+
   # -------------------------------------------------------------------
   # Pool request path (e2e)
   # -------------------------------------------------------------------

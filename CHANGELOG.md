@@ -17,6 +17,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - The x86_64 Linux NIF of 0.7.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. Ubuntu 22.04 ships glibc 2.35, so a release check holds the floor: it fails when a NIF needs a glibc newer than 2.34.
 - A manual release dispatch built `main` but published the files under the given tag. It now builds the tag, and it fails when the tag does not exist.
 - HexDocs "View source" links point to the release tag, not to `main`.
+- `:local_address` accepted strings such as `"127.1"` that the NIF then rejected. The adapter now sends the canonical form, for example `"127.0.0.1"`. An address with an IPv6 scope such as `"fe80::1%eth0"` is still rejected, because the bind would drop the scope.
+- A proxy with an IPv6 host such as `{:http, "::1", 8080, []}` failed with `invalid proxy URL`. The adapter now brackets a bare IPv6 host and keeps a bracketed one such as `"[::1]"` as is.
+- `CloakedReq.Pool.new/1` ignored unknown options, so a typo such as `impersonation:` built a pool without a profile. It now returns an `:invalid_request` error that names the unknown keys. A duplicated key keeps its last value, like Req, and a list that is not a keyword list returns an `:invalid_request` error.
 
 ### Changed
 
@@ -31,6 +34,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - CI now runs `cargo fmt --check`, clippy, `mix deps.audit`, and sobelow, and it compiles with `--warnings-as-errors`, the same as `task check`.
 - README lists the precompiled targets and the steps to build the NIF from source.
 - `RELEASE.md` uses git commands and a checksum step that always refreshes the new version.
+- `connect_options: [proxy_headers: ...]` accepts only a list of `{name, value}` pairs, the same as Mint. A map is rejected.
+- Responses no longer carry the private `:cloaked_req_url` key. wreq does not follow redirects, so it always held the request URL. Use `request.url` instead.
+- `CloakedReq.AdapterError.exception/1` accepts only a `%CloakedReq.Error{}`.
+- README Limitations lists the Req options the adapter does not support.
 - Tests only. The `local_address` test binds `127.0.0.2`, so it fails when the option is lost. The public-suffix cookie test goes through a proxy, so it reaches the check. The pool test checks the pool's user-agent on the wire. The redirect cookie test checks the redirect target.
 - New test: a malformed response returns `%CloakedReq.AdapterError{}` and Req does not retry it.
 - Duplicate tests, the unused `TestServer` host option, and a dead check in `bench/adapter_perf.exs` are removed.

@@ -166,3 +166,7 @@ Profiles based on `wreq-util 0.2.0`. Profile atoms with a dot must be quoted, e.
 ## Limitations
 
 - **No HTTP/3 or QUIC.** wreq speaks HTTP/1.1 and HTTP/2 only, so QUIC transport fingerprinting (JA4QUIC) is out of reach. When you need it, look at the Go library [surf](https://github.com/enetx/surf), which fingerprints QUIC; reaching it from Elixir means a sidecar or Port instead of a NIF.
+- **No streaming.** The adapter rejects `into:`. The request body must be a binary or iodata, so a stream fails. A `form_multipart` body with a `File.Stream` is a stream.
+- **Do not set `compressed: true`.** The profile sends its own `accept-encoding`, and wreq decompresses the response. `compressed: true` replaces the profile header and breaks the fingerprint. `raw: true` has no effect, because the body is already decompressed.
+- **`:max_body_size` counts decompressed bytes.**
+- **Finch-only options are ignored.** `:inet6`, `:unix_socket`, and `:request_timeout` have no effect. Use `:receive_timeout` and `connect_options: [timeout: ...]` for timeouts.

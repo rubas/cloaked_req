@@ -6,7 +6,7 @@ defmodule CloakedReq.Error do
   @enforce_keys [:type, :message]
   defstruct [:type, :message, details: %{}]
 
-  @type type :: :invalid_request | :transport_error | :nif_panic | :invalid_native_response | :native_error
+  @type type :: :invalid_request | :transport_error | :nif_panic
 
   @type t :: %__MODULE__{
           type: type(),

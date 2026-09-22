@@ -8,9 +8,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
-- `:local_address` accepted strings such as `"127.1"` that the NIF then rejected. The adapter now sends the canonical form, for example `"127.0.0.1"`. An IPv6 scope such as `%eth0` is dropped.
-- A proxy with an IPv6 host such as `{:http, "::1", 8080, []}` failed with `invalid proxy URL`. The host is now bracketed.
-- `CloakedReq.Pool.new/1` ignored unknown options, so a typo such as `impersonation:` built a pool without a profile. It now returns an `:invalid_request` error that names the unknown keys.
+- `:local_address` accepted strings such as `"127.1"` that the NIF then rejected. The adapter now sends the canonical form, for example `"127.0.0.1"`. An address with an IPv6 scope such as `"fe80::1%eth0"` is still rejected, because the bind would drop the scope.
+- A proxy with an IPv6 host such as `{:http, "::1", 8080, []}` failed with `invalid proxy URL`. The adapter now brackets a bare IPv6 host and keeps a bracketed one such as `"[::1]"` as is.
+- `CloakedReq.Pool.new/1` ignored unknown options, so a typo such as `impersonation:` built a pool without a profile. It now returns an `:invalid_request` error that names the unknown keys. A duplicated key keeps its last value, like Req, and a list that is not a keyword list returns an `:invalid_request` error.
 
 ### Changed
 

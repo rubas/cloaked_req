@@ -15,12 +15,12 @@ description: |
 
 ## Quick Reference
 
-| Step                         | Trigger           | Output                                            |
-| ---------------------------- | ----------------- | ------------------------------------------------- |
-| Bump `@version` in `mix.exs` | PR to `main`      | Release candidate commit                          |
-| Merge version bump to `main` | `release.yml`     | `vX.Y.Z` tag and GitHub release                   |
-| Refresh the checksum file    | PR to `main`      | `checksum-Elixir.CloakedReq.Native.exs`           |
-| Publish package              | `mix hex.publish` | Hex package and HexDocs docs                      |
+| Step                         | Trigger           | Output                                  |
+| ---------------------------- | ----------------- | --------------------------------------- |
+| Bump `@version` in `mix.exs` | PR to `main`      | Release candidate commit                |
+| Merge version bump to `main` | `release.yml`     | `vX.Y.Z` tag and GitHub release         |
+| Refresh the checksum file    | PR to `main`      | `checksum-Elixir.CloakedReq.Native.exs` |
+| Publish package              | `mix hex.publish` | Hex package and HexDocs docs            |
 
 ## Version Bump Rules
 

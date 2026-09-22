@@ -412,10 +412,17 @@ async fn execute_request_async(
         builder = builder.body(body);
     }
 
-    let response = builder
-        .send()
-        .await
-        .map_err(|reason| transport_error("request execution failed", &reason))?;
+    let response = builder.send().await.map_err(|reason| {
+        if reason.is_builder() {
+            NativeError::new(
+                "invalid_request",
+                "invalid request",
+                json!({"reason": reason.to_string()}),
+            )
+        } else {
+            transport_error("request execution failed", &reason)
+        }
+    })?;
 
     let status = response.status().as_u16();
     let url = response.uri().to_string();
@@ -624,6 +631,16 @@ mod tests {
         let err = result.expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "invalid HTTP method");
+    }
+
+    #[test]
+    fn rejects_invalid_header_value_as_invalid_request() {
+        let mut request = base_request();
+        request.headers = vec![("x-bad".to_string(), "a\nb".to_string())];
+
+        let err = execute_request(request, None, None, None).expect_err("expected error");
+        assert_eq!(err.type_name, "invalid_request");
+        assert_eq!(err.message, "invalid request");
     }
 
     #[test]

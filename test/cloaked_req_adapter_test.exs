@@ -321,8 +321,7 @@ defmodule CloakedReq.AdapterTest do
     assert {:error, %Error{type: :invalid_request, message: "request body exceeds max_body_size"} = error} =
              Request.to_native_payload(request)
 
-    assert error.details.size == 1000
-    assert error.details.limit == 500
+    assert error.details == %{"size" => 1000, "limit" => 500}
   end
 
   test "request body within max_body_size passes" do
@@ -344,8 +343,7 @@ defmodule CloakedReq.AdapterTest do
     assert {:error, %Error{type: :invalid_request, message: "request body exceeds max_body_size"} = error} =
              Request.to_native_payload(request)
 
-    assert error.details.size == 1200
-    assert error.details.limit == 1000
+    assert error.details == %{"size" => 1200, "limit" => 1000}
   end
 
   test "default max_body_size is 10 MB in payload" do

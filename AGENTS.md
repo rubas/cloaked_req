@@ -22,9 +22,9 @@ the same checks.
 
 - `native/cloaked_req_native/` holds the Rust crate. It performs the network transport. The option
   rules stay in Elixir: `lib/cloaked_req/request.ex` validates the adapter options and sets the
-  body-size and connect-timeout defaults, `lib/cloaked_req.ex` lets a pool's connect timeout win
-  over the per-request one, and `lib/cloaked_req/native.ex` sets the backstop timeout for the
-  native reply.
+  body-size, receive-timeout, and connect-timeout defaults. The native task replies on every path
+  except an abort after the caller died, so `lib/cloaked_req/native.ex` waits for the reply with no
+  timeout.
 - `checksum-Elixir.CloakedReq.Native.exs` is written by `.github/workflows/release.yml`. Never edit
   it by hand.
 - `test/support/test_server.ex` is the local HTTP server the unit tests hit.

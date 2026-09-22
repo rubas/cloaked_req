@@ -67,10 +67,10 @@ defmodule CloakedReq.Pool do
 
   @default_connect_timeout 30_000
 
-  @enforce_keys [:ref, :connect_timeout]
-  defstruct [:ref, :connect_timeout]
+  @enforce_keys [:ref]
+  defstruct [:ref]
 
-  @type t :: %__MODULE__{ref: reference(), connect_timeout: pos_integer()}
+  @type t :: %__MODULE__{ref: reference()}
 
   @doc """
   Builds a pool with its own connection pool, or returns `{:error, %CloakedReq.Error{}}`.
@@ -99,7 +99,7 @@ defmodule CloakedReq.Pool do
              connect_timeout_ms: connect_timeout,
              pool_idle_timeout_ms: pool_idle_timeout
            }) do
-      {:ok, %__MODULE__{ref: ref, connect_timeout: connect_timeout}}
+      {:ok, %__MODULE__{ref: ref}}
     end
   end
 

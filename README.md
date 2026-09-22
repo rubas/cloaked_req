@@ -63,13 +63,15 @@ request =
 | `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max request and response body size             |
 | `:pool`                 | `Pool.t()`                  | `nil`   | Dedicated, isolated client and connection pool |
 
-`:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit. Req's `:receive_timeout` (default 15s) is also respected.
+`:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit.
+
+Req's `:receive_timeout` (default 15s) starts with the request. Until the response headers arrive, it is one window that does not reset: DNS, connect, TLS, and the upload of the request body all count against it, so a large upload on a slow link needs a larger value. After the headers, it bounds each wait for the next body chunk, so a body that keeps arriving has no total limit.
 
 ### Req connect options
 
 `CloakedReq` respects these Req `:connect_options`:
 
-- `:timeout` - socket connect timeout in milliseconds, default 30s
+- `:timeout` - connect timeout in milliseconds for DNS, TCP, the proxy tunnel, and TLS, default 30s. `:receive_timeout` also runs during the connect, so the lower of the two applies.
 - `:proxy` - `{:http | :https, host, port, []}` proxy tuple
 - `:proxy_headers` - proxy headers, commonly used for proxy authentication
 
@@ -99,7 +101,7 @@ A timeout, a refused connection, or a closed connection returns `%Req.TransportE
 
 ### Cookie jar
 
-Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain. An explicit `cookie` header on a request wins over the jar, so the request carries one `Cookie` header.
+Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain. A `Domain` equal to a request host that is itself a public suffix, such as `localhost`, is kept as a host-only cookie. An explicit `cookie` header on a request wins over the jar, and the jar adds no cookies to that request. Over HTTP/2 the jar sends one `cookie` field per cookie.
 
 ```elixir
 jar = CloakedReq.CookieJar.new()

@@ -81,7 +81,8 @@ defmodule CloakedReq.Request do
 
   defp normalize_body(body, max) when is_binary(body) do
     if max && byte_size(body) > max do
-      {:error, Error.new(:invalid_request, "request body exceeds max_body_size", %{size: byte_size(body), limit: max})}
+      {:error,
+       Error.new(:invalid_request, "request body exceeds max_body_size", %{"size" => byte_size(body), "limit" => max})}
     else
       {:ok, body}
     end
@@ -91,7 +92,7 @@ defmodule CloakedReq.Request do
     size = :erlang.iolist_size(body)
 
     if max && size > max do
-      {:error, Error.new(:invalid_request, "request body exceeds max_body_size", %{size: size, limit: max})}
+      {:error, Error.new(:invalid_request, "request body exceeds max_body_size", %{"size" => size, "limit" => max})}
     else
       {:ok, IO.iodata_to_binary(body)}
     end

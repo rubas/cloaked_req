@@ -2,27 +2,26 @@ mod error;
 mod request;
 mod response;
 
+use std::any::Any;
 use std::num::NonZeroUsize;
-#[cfg(test)]
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
+use bytes::Bytes;
+use cookie::Cookie;
 use error::NativeError;
-use futures_util::StreamExt;
+use futures_util::future::{AbortHandle, Abortable};
+use futures_util::{FutureExt, StreamExt};
 use lru::LruCache;
 use request::{NativePoolConfig, NativeProxyConfig, NativeRequest};
-use response::NativeResponseMeta;
-use rustler::env::SavedTerm;
-use rustler::serde::SerdeTerm;
+use response::{NativeResponseMeta, RawHeaderValue};
 use rustler::types::binary::{Binary, NewBinary};
 use rustler::{Encoder, Env, LocalPid, Monitor, OwnedEnv, ResourceArc, Term};
 use serde_json::{Value, json};
-use tokio::task::AbortHandle;
-use wreq::cookie::{CookieStore, Cookies};
+use wreq::cookie::{CookieStore, Cookies, Jar};
 use wreq::header::{HeaderMap, HeaderName, HeaderValue};
-use wreq::{Client, Method, Proxy};
+use wreq::{Client, Method, Proxy, Uri, Version};
 use wreq_util::Profile;
 
 rustler::atoms! {
@@ -57,10 +56,27 @@ static CLIENT_CACHE: LazyLock<Mutex<LruCache<ClientKey, Client>>> = LazyLock::ne
 /// Wraps wreq's `Jar` (RFC 6265-compliant cookie store). The jar is
 /// automatically dropped when the Elixir term is garbage collected.
 struct CookieJarResource {
-    jar: wreq::cookie::Jar,
+    store: Arc<PublicSuffixGuard>,
 }
 
 impl rustler::Resource for CookieJarResource {}
+
+/// Adds the one check `Jar` lacks, the public suffix check in `cookie_for_jar`.
+struct PublicSuffixGuard(Jar);
+
+impl CookieStore for PublicSuffixGuard {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
+        for header in cookie_headers {
+            if let Some(cookie) = cookie_for_jar(header.as_bytes(), uri.host()) {
+                self.0.add(cookie, uri);
+            }
+        }
+    }
+
+    fn cookies(&self, uri: &Uri, version: Version) -> Cookies {
+        self.0.cookies(uri, version)
+    }
+}
 
 /// Opaque HTTP client resource held by the BEAM.
 ///
@@ -72,71 +88,14 @@ struct ClientResource {
 
 impl rustler::Resource for ClientResource {}
 
-struct RequestCancellationResource {
-    abort_handle: Mutex<Option<AbortHandle>>,
-    cancelled: AtomicBool,
-}
-
-impl RequestCancellationResource {
-    fn new() -> Self {
-        Self {
-            abort_handle: Mutex::new(None),
-            cancelled: AtomicBool::new(false),
-        }
-    }
-
-    fn set_abort_handle(&self, handle: AbortHandle) {
-        if self.cancelled.load(Ordering::Relaxed) {
-            handle.abort();
-            return;
-        }
-
-        let mut abort_handle = self.abort_handle.lock().unwrap_or_else(|e| e.into_inner());
-
-        if self.cancelled.load(Ordering::Relaxed) {
-            handle.abort();
-        } else {
-            *abort_handle = Some(handle);
-        }
-    }
-
-    fn abort(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
-
-        if let Some(handle) = self
-            .abort_handle
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            handle.abort();
-        }
-    }
-}
+/// Aborts the request task when the calling process dies.
+struct RequestCancellationResource(AbortHandle);
 
 impl rustler::Resource for RequestCancellationResource {
     const IMPLEMENTS_DOWN: bool = true;
 
     fn down<'a>(&'a self, _env: Env<'a>, _pid: LocalPid, _monitor: Monitor) {
-        self.abort();
-    }
-}
-
-#[cfg(test)]
-fn run_with_panic_protection<T, F>(f: F) -> Result<T, NativeError>
-where
-    F: FnOnce() -> Result<T, NativeError>,
-{
-    match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(result) => result,
-        Err(panic_info) => {
-            let message = panic_info
-                .downcast_ref::<String>()
-                .map(|s| s.as_str())
-                .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown panic");
-            Err(NativeError::new("nif_panic", message, json!({})))
-        }
+        self.0.abort();
     }
 }
 
@@ -251,26 +210,21 @@ fn build_proxy(proxy_config: &NativeProxyConfig) -> Result<Proxy, NativeError> {
 #[rustler::nif]
 fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
     ResourceArc::new(CookieJarResource {
-        jar: wreq::cookie::Jar::default(),
+        store: Arc::new(PublicSuffixGuard(Jar::default())),
     })
 }
 
 /// Builds a dedicated HTTP client with its own connection pool.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn nif_new_pool<'a>(env: Env<'a>, config: NativePoolConfig) -> Term<'a> {
-    match build_client(
+    build_client(
         config.emulation.as_deref(),
         config.insecure_skip_verify,
         config.connect_timeout_ms,
         config.pool_idle_timeout_ms,
-    ) {
-        Ok(client) => (ok(), ResourceArc::new(ClientResource { client })).encode(env),
-        Err(native_error) => {
-            let error_value =
-                serde_json::to_value(native_error).expect("NativeError must serialize");
-            (error(), SerdeTerm(error_value)).encode(env)
-        }
-    }
+    )
+    .map(|client| ResourceArc::new(ClientResource { client }))
+    .encode(env)
 }
 
 #[rustler::nif]
@@ -283,110 +237,106 @@ fn nif_perform_request<'a>(
     pool: Option<ResourceArc<ClientResource>>,
 ) -> Term<'a> {
     let caller = env.pid();
-    let token_env = OwnedEnv::new();
+    let mut token_env = OwnedEnv::new();
     let saved_token = token_env.save(token);
     // Save the body term rather than copying its bytes here: for a refcounted
     // binary `save` (enif_make_copy) only bumps the reference count, so the
     // scheduler thread does O(1) work regardless of body size. The actual copy
     // into an owned Vec happens on the Tokio thread below.
     let saved_body = body.map(|b| token_env.save(b));
-    let cancellation = ResourceArc::new(RequestCancellationResource::new());
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let cancellation = ResourceArc::new(RequestCancellationResource(abort_handle));
     let monitor = env.monitor(&cancellation, &caller);
 
-    RUNTIME.spawn(async move {
-        let body_vec = saved_body.map(|saved| {
-            token_env.run(|env| {
-                saved
-                    .load(env)
-                    .decode::<Binary>()
-                    .expect("request body was saved as a binary")
-                    .as_slice()
-                    .to_vec()
-            })
-        });
-
-        let request_handle = tokio::spawn(async move {
-            execute_request_async(request, body_vec, cookie_jar, pool).await
-        });
-
-        cancellation.set_abort_handle(request_handle.abort_handle());
-
-        let result = request_handle.await.unwrap_or_else(|join_error| {
-            let message = if join_error.is_panic() {
-                "request task panicked"
-            } else {
-                "request task was cancelled"
-            };
-
-            Err(NativeError::new("nif_panic", message, json!({})))
-        });
+    // Every path replies except an abort, which only a dead caller triggers.
+    // Panics are caught here, so the caller waits without a timeout.
+    let task = async move {
+        // A `&mut` borrow keeps the future Send: OwnedEnv is Send, not Sync.
+        let body_env = &mut token_env;
+        let result = AssertUnwindSafe(async move {
+            let body = saved_body.map(|saved| {
+                body_env.run(|env| {
+                    saved
+                        .load(env)
+                        .decode::<Binary>()
+                        .expect("request body was saved as a binary")
+                        .as_slice()
+                        .to_vec()
+                })
+            });
+            execute_request_async(request, body, cookie_jar, pool).await
+        })
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|payload| Err(panic_error(&*payload)));
 
         if let Some(monitor) = monitor {
             token_env.demonitor(&cancellation, &monitor);
         }
 
-        send_request_result(caller, token_env, saved_token, result);
-    });
+        let mut reply = |result| {
+            token_env.send_and_clear(&caller, |env| {
+                let token = saved_token.load(env);
+                (
+                    cloaked_req_response(),
+                    token,
+                    encode_request_result(env, result),
+                )
+            })
+        };
+
+        // A panic while encoding, such as a failed allocation for a large body,
+        // leaves the env uncleared, so the token still loads for a short reply.
+        if let Err(payload) = std::panic::catch_unwind(AssertUnwindSafe(|| reply(result))) {
+            let _ = reply(Err(panic_error(&*payload)));
+        }
+    };
+
+    RUNTIME.spawn(Abortable::new(task, abort_registration));
 
     ok().encode(env)
 }
 
-fn send_request_result(
-    caller: LocalPid,
-    mut token_env: OwnedEnv,
-    saved_token: SavedTerm,
-    result: Result<(NativeResponseMeta, Vec<u8>), NativeError>,
-) {
-    let _ = token_env.send_and_clear(&caller, |env| {
-        let token = saved_token.load(env);
-        let result_term = encode_request_result(env, result);
-        (cloaked_req_response(), token, result_term)
-    });
+fn panic_error(payload: &(dyn Any + Send)) -> NativeError {
+    let reason = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or_default();
+    NativeError::new(
+        "nif_panic",
+        "request task panicked",
+        json!({"reason": reason}),
+    )
 }
 
 fn encode_request_result<'a>(
     env: Env<'a>,
-    result: Result<(NativeResponseMeta, Vec<u8>), NativeError>,
+    result: Result<(NativeResponseMeta, Vec<Bytes>), NativeError>,
 ) -> Term<'a> {
     match result {
-        Ok((meta, response_body)) => {
-            let mut new_bin = NewBinary::new(env, response_body.len());
-            new_bin.as_mut_slice().copy_from_slice(&response_body);
-            let body_binary = Binary::from(new_bin);
-            (ok(), meta, body_binary).encode(env)
+        Ok((meta, chunks)) => {
+            let mut body = NewBinary::new(env, chunks.iter().map(Bytes::len).sum());
+            let mut offset = 0;
+            for chunk in chunks {
+                body.as_mut_slice()[offset..offset + chunk.len()].copy_from_slice(&chunk);
+                offset += chunk.len();
+            }
+            (ok(), meta, Binary::from(body)).encode(env)
         }
-        Err(native_error) => {
-            let error_value =
-                serde_json::to_value(native_error).expect("NativeError must serialize");
-            (error(), SerdeTerm(error_value)).encode(env)
-        }
+        Err(native_error) => (error(), native_error).encode(env),
     }
 }
 
+/// Keeps the refcounted chunks wreq yields, so the copy into the BEAM binary
+/// is the only copy of the body.
 async fn read_body_with_limit(
     response: wreq::Response,
     max_size: Option<u64>,
-) -> Result<Vec<u8>, NativeError> {
+) -> Result<Vec<Bytes>, NativeError> {
     let limit = max_size.unwrap_or(u64::MAX) as usize;
-
-    let content_length = response
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok());
-
-    // The streaming loop below enforces the real limit, so the Content-Length
-    // header is only a sizing hint here. Clamp the hint: a hostile server
-    // claiming a huge Content-Length must not drive a giant Vec::with_capacity
-    // whose allocation failure aborts the whole BEAM VM. extend_from_slice
-    // still grows geometrically for genuinely large bodies.
-    const PREALLOC_CAP: usize = 64 * 1024;
-
-    let mut body = match content_length {
-        Some(len) if len <= limit => Vec::with_capacity(len.min(PREALLOC_CAP)),
-        _ => Vec::new(),
-    };
-
+    let mut size = 0;
+    let mut chunks = Vec::new();
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream
@@ -395,17 +345,18 @@ async fn read_body_with_limit(
         .transpose()
         .map_err(|reason| transport_error("failed to read response body", &reason))?
     {
-        if body.len() + chunk.len() > limit {
+        size += chunk.len();
+        if size > limit {
             return Err(NativeError::new(
                 "invalid_request",
                 "response body exceeds max_body_size",
                 json!({"limit": limit}),
             ));
         }
-        body.extend_from_slice(&chunk);
+        chunks.push(chunk);
     }
 
-    Ok(body)
+    Ok(chunks)
 }
 
 async fn execute_request_async(
@@ -413,7 +364,7 @@ async fn execute_request_async(
     body: Option<Vec<u8>>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
     pool: Option<ResourceArc<ClientResource>>,
-) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
+) -> Result<(NativeResponseMeta, Vec<Bytes>), NativeError> {
     let client = match &pool {
         Some(p) => p.client.clone(),
         None => get_or_build_client(
@@ -431,9 +382,10 @@ async fn execute_request_async(
         )
     })?;
 
+    // Req's :receive_timeout. README.md states what it bounds.
     let mut builder = client
         .request(method, request.url.as_str())
-        .timeout(Duration::from_millis(request.receive_timeout_ms));
+        .read_timeout(Duration::from_millis(request.receive_timeout_ms));
 
     // Proxy and source IP are per-request: wreq's connection pool keys on both,
     // so the shared client never reuses a connection across proxies or source
@@ -457,66 +409,34 @@ async fn execute_request_async(
         builder = builder.header(name.as_str(), value.as_str());
     }
 
-    // RFC 6265 allows one Cookie header per request. A caller-set header wins
-    // over the jar, the same rule wreq applies on its own cookie path.
-    let caller_sets_cookie = request
-        .headers
-        .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
-
-    if let Some(ref jar) = cookie_jar
-        && !caller_sets_cookie
-        && let Ok(parsed_uri) = request.url.parse::<http::Uri>()
-    {
-        match jar.jar.cookies(&parsed_uri, http::Version::HTTP_11) {
-            Cookies::Compressed(val) => {
-                builder = builder.header("cookie", val);
-            }
-            Cookies::Uncompressed(vals) => {
-                for val in vals {
-                    builder = builder.header("cookie", val);
-                }
-            }
-            _ => {}
-        }
+    // wreq skips the jar when the caller set a Cookie header, and stores each
+    // set-cookie against the URI it sent the request to.
+    if let Some(jar) = cookie_jar {
+        builder = builder.cookie_provider(jar.store.clone());
     }
 
     if let Some(body) = body {
         builder = builder.body(body);
     }
 
-    let response = builder
-        .send()
-        .await
-        .map_err(|reason| transport_error("request execution failed", &reason))?;
-
-    // The jar applies the RFC 6265 domain match itself. Only the public-suffix
-    // rule has to run here, before the header reaches the jar.
-    if let Some(ref jar) = cookie_jar {
-        let response_uri = response.uri();
-        let set_cookies: Vec<_> = response
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter(|hv| is_cookie_domain_safe(hv.as_bytes()))
-            .collect();
-        if !set_cookies.is_empty() {
-            let mut iter = set_cookies.into_iter();
-            jar.jar.set_cookies(&mut iter, response_uri);
+    let response = builder.send().await.map_err(|reason| {
+        if reason.is_builder() {
+            NativeError::new(
+                "invalid_request",
+                "invalid request",
+                json!({"reason": reason.to_string()}),
+            )
+        } else {
+            transport_error("request execution failed", &reason)
         }
-    }
+    })?;
 
     let status = response.status().as_u16();
     let url = response.uri().to_string();
     let headers = response
         .headers()
         .iter()
-        .map(|(name, value)| {
-            (
-                name.to_string(),
-                String::from_utf8_lossy(value.as_bytes()).into_owned(),
-            )
-        })
+        .map(|(name, value)| (name.as_str().to_owned(), RawHeaderValue(value.clone())))
         .collect::<Vec<_>>();
 
     let body_bytes = read_body_with_limit(response, request.max_body_size_bytes).await?;
@@ -538,10 +458,12 @@ fn execute_request(
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
     pool: Option<ResourceArc<ClientResource>>,
 ) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
-    RUNTIME.block_on(execute_request_async(request, body, cookie_jar, pool))
+    RUNTIME
+        .block_on(execute_request_async(request, body, cookie_jar, pool))
+        .map(|(meta, chunks)| (meta, chunks.concat()))
 }
 
-fn transport_error(message: &str, reason: &wreq::Error) -> NativeError {
+fn transport_error(message: &'static str, reason: &wreq::Error) -> NativeError {
     let mut details = json!({"reason": reason.to_string(), "debug": format!("{reason:?}")});
     if let Some(kind) = transport_error_kind(reason) {
         details["kind"] = json!(kind);
@@ -582,42 +504,24 @@ fn transport_error_kind(error: &wreq::Error) -> Option<&'static str> {
     None
 }
 
-/// Rejects a `set-cookie` header whose Domain attribute is a public suffix
-/// (e.g. "com", "co.uk", "github.io"). Host-only cookies (no Domain attribute)
-/// are always accepted. The jar rejects a Domain that does not match the host.
-fn is_cookie_domain_safe(header_bytes: &[u8]) -> bool {
-    let header_str = match std::str::from_utf8(header_bytes) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
+/// Parses a `set-cookie` header with the parser the jar uses, so the check
+/// sees the Domain the jar stores. A Domain that is a public suffix (e.g.
+/// "com", "co.uk", "github.io") drops the cookie, unless it equals the request
+/// host, such as `localhost`: RFC 6265 section 5.3 step 5 then makes the
+/// cookie host-only. The jar rejects a Domain that does not match the host.
+fn cookie_for_jar<'a>(header: &'a [u8], host: Option<&str>) -> Option<Cookie<'a>> {
+    let mut cookie = Cookie::parse(std::str::from_utf8(header).ok()?).ok()?;
 
-    match extract_cookie_domain(header_str) {
-        Some(domain) => {
-            let domain = domain.trim_start_matches('.').to_lowercase();
-            psl::domain(domain.as_bytes()).is_some()
+    if let Some(domain) = cookie.domain().map(str::to_lowercase)
+        && psl::domain(domain.as_bytes()).is_none()
+    {
+        if !host.is_some_and(|host| host.eq_ignore_ascii_case(&domain)) {
+            return None;
         }
-        None => true,
+        cookie.unset_domain();
     }
-}
 
-/// Extracts the Domain attribute value from a set-cookie header string.
-///
-/// Splits on the first `=` so a multibyte UTF-8 character cannot land on a
-/// non-char boundary and panic. An empty `Domain=` is treated as absent, which
-/// keeps the cookie host-only, matching the previous behavior.
-fn extract_cookie_domain(header: &str) -> Option<&str> {
-    header
-        .split(';')
-        .skip(1) // skip name=value
-        .find_map(|attr| {
-            let (key, value) = attr.split_once('=')?;
-            if key.trim().eq_ignore_ascii_case("domain") {
-                let value = value.trim();
-                (!value.is_empty()).then_some(value)
-            } else {
-                None
-            }
-        })
+    Some(cookie)
 }
 
 fn on_load(env: Env, _info: Term) -> bool {
@@ -718,6 +622,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_header_value_as_invalid_request() {
+        let mut request = base_request();
+        request.headers = vec![("x-bad".to_string(), "a\nb".to_string())];
+
+        let err = execute_request(request, None, None, None).expect_err("expected error");
+        assert_eq!(err.type_name, "invalid_request");
+        assert_eq!(err.message, "invalid request");
+    }
+
+    #[test]
     fn executes_local_http_request_successfully() {
         let response_body = "ok";
         let raw_response = format!(
@@ -741,8 +655,7 @@ mod tests {
         assert!(
             meta.headers
                 .iter()
-                .any(|header| header.0.eq_ignore_ascii_case("content-type")
-                    && header.1.contains("text/plain"))
+                .any(|(name, value)| name == "content-type" && value.0 == "text/plain")
         );
 
         let raw_request = received_request
@@ -883,6 +796,33 @@ mod tests {
     }
 
     #[test]
+    fn body_that_outlasts_receive_timeout_succeeds_while_chunks_keep_arriving() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener must bind");
+        let addr = listener.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server must accept");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 60\r\n\r\n");
+            for _ in 0..60 {
+                thread::sleep(StdDuration::from_millis(20));
+                let _ = stream.write_all(b"x");
+                let _ = stream.flush();
+            }
+        });
+
+        let mut request = base_request();
+        request.url = format!("http://{addr}/");
+        request.receive_timeout_ms = 1_000;
+
+        let (meta, body) =
+            execute_request(request, None, None, None).expect("request should succeed");
+        server.join().expect("server thread must join");
+        assert_eq!(meta.status, 200);
+        assert_eq!(body, [b'x'; 60]);
+    }
+
+    #[test]
     fn returns_closed_kind_when_server_closes_mid_body() {
         let (url, server) = spawn_partial_body_server(0);
 
@@ -969,28 +909,6 @@ mod tests {
     }
 
     #[test]
-    fn huge_content_length_does_not_preallocate() {
-        // Content-Length above isize::MAX: an unclamped Vec::with_capacity(len)
-        // would panic ("capacity overflow") or, for in-range huge values, abort
-        // the process on allocation failure. The clamp keeps the hint at 64 KiB,
-        // so the request proceeds and fails cleanly on the truncated body
-        // instead of crashing.
-        let raw_response = b"HTTP/1.1 200 OK\r\ncontent-length: 10000000000000000000\r\nconnection: close\r\n\r\nok".to_vec();
-        let (url, _rx, server) = spawn_test_server(raw_response, 200);
-
-        let mut request = base_request();
-        request.url = url;
-        request.max_body_size_bytes = None; // :unlimited — guard is always true
-
-        let result = execute_request(request, None, None, None);
-        server.join().expect("server thread must join");
-
-        // No panic, no abort: the truncated body surfaces as a transport error.
-        let err = result.expect_err("expected truncated-body error, not a crash");
-        assert_eq!(err.type_name, "transport_error");
-    }
-
-    #[test]
     fn handles_empty_response_body() {
         let raw_response =
             b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_vec();
@@ -1031,9 +949,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_non_utf8_header_values() {
-        // Header value contains raw bytes that are not valid UTF-8.
-        // wreq uses from_utf8_lossy, so we expect replacement characters.
+    fn keeps_non_utf8_header_value_bytes() {
         let mut raw_response = Vec::new();
         raw_response.extend_from_slice(b"HTTP/1.1 200 OK\r\nx-binary: ");
         raw_response.extend_from_slice(&[0xff, 0xfe]);
@@ -1043,63 +959,16 @@ mod tests {
         let mut request = base_request();
         request.url = url;
 
-        let result = execute_request(request, None, None, None);
+        let (meta, _body) =
+            execute_request(request, None, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
-        // wreq may reject invalid header bytes at the HTTP parsing level.
-        // Either a successful response with lossy-decoded headers or a transport error is acceptable.
-        match result {
-            Ok((meta, _body)) => {
-                assert_eq!(meta.status, 200);
-                let binary_header = meta
-                    .headers
-                    .iter()
-                    .find(|h| h.0 == "x-binary")
-                    .expect("x-binary header should exist");
-                // from_utf8_lossy replaces invalid bytes with U+FFFD
-                assert!(binary_header.1.contains('\u{FFFD}'));
-            }
-            Err(err) => {
-                // Acceptable: wreq rejects non-UTF8 headers at parse level
-                assert_eq!(err.type_name, "transport_error");
-            }
-        }
-    }
-
-    #[test]
-    fn panic_protection_converts_panic_to_nif_panic_error() {
-        let result = run_with_panic_protection::<(), _>(|| {
-            panic!("simulated NIF panic");
-        });
-        let err = result.unwrap_err();
-        assert_eq!(err.type_name, "nif_panic");
-        assert_eq!(err.message, "simulated NIF panic");
-    }
-
-    #[test]
-    fn panic_protection_passes_through_ok() {
-        let result = run_with_panic_protection(|| {
-            Ok((
-                NativeResponseMeta {
-                    status: 200,
-                    url: "https://example.com".to_string(),
-                    headers: vec![],
-                },
-                Vec::<u8>::new(),
-            ))
-        });
-        let (meta, body) = result.unwrap();
-        assert_eq!(meta.status, 200);
-        assert!(body.is_empty());
-    }
-
-    #[test]
-    fn panic_protection_passes_through_err() {
-        let result = run_with_panic_protection::<(), _>(|| {
-            Err(NativeError::new("transport_error", "timeout", json!({})))
-        });
-        let err = result.unwrap_err();
-        assert_eq!(err.type_name, "transport_error");
+        let (_, value) = meta
+            .headers
+            .iter()
+            .find(|(name, _)| name == "x-binary")
+            .expect("x-binary header should exist");
+        assert_eq!(value.0.as_bytes(), [0xff, 0xfe]);
     }
 
     // --- local_address tests ---
@@ -1185,63 +1054,50 @@ mod tests {
 
     #[test]
     fn psl_rejects_public_suffix_domain() {
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=com"));
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=CO.UK"));
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=.github.io"));
+        let host = Some("www.example.com");
+        assert!(cookie_for_jar(b"evil=1; Domain=com", host).is_none());
+        assert!(cookie_for_jar(b"evil=1; Domain=CO.UK", host).is_none());
+        assert!(cookie_for_jar(b"evil=1; Domain=.github.io", host).is_none());
+    }
+
+    #[test]
+    fn psl_checks_the_last_domain_attribute_the_jar_stores() {
+        let host = Some("www.example.com");
+        assert!(cookie_for_jar(b"evil=1; Domain=example.com; Domain=com", host).is_none());
     }
 
     #[test]
     fn psl_accepts_registrable_domain() {
-        assert!(is_cookie_domain_safe(b"x=1; Domain=example.com"));
-        assert!(is_cookie_domain_safe(b"x=1; Domain=.Example.co.uk"));
+        let host = Some("www.example.com");
+        let cookie = cookie_for_jar(b"x=1; Domain=.Example.co.uk", host).expect("kept");
+        assert_eq!(cookie.domain(), Some("Example.co.uk"));
+        assert!(cookie_for_jar(b"x=1; Domain=example.com", host).is_some());
+    }
+
+    #[test]
+    fn psl_keeps_public_suffix_domain_equal_to_host_as_host_only() {
+        let cookie = cookie_for_jar(b"sid=1; Domain=localhost", Some("localhost")).expect("kept");
+        assert_eq!(cookie.domain(), None);
+        let cookie = cookie_for_jar(b"sid=1; Domain=.Intranet", Some("intranet")).expect("kept");
+        assert_eq!(cookie.domain(), None);
+        assert!(cookie_for_jar(b"sid=1; Domain=localhost", Some("intranet")).is_none());
     }
 
     #[test]
     fn psl_accepts_host_only_cookie() {
-        assert!(is_cookie_domain_safe(b"session=abc; Path=/"));
-    }
-
-    #[test]
-    fn extract_cookie_domain_parses_correctly() {
-        assert_eq!(
-            extract_cookie_domain("session=abc; Domain=.example.com; Path=/"),
-            Some(".example.com")
-        );
-        assert_eq!(extract_cookie_domain("session=abc; Path=/"), None);
-        assert_eq!(
-            extract_cookie_domain("session=abc; path=/; domain=test.com; secure"),
-            Some("test.com")
-        );
+        assert!(cookie_for_jar(b"session=abc; Path=/", Some("com")).is_some());
     }
 
     #[test]
     fn psl_rejects_non_utf8_header() {
-        assert!(!is_cookie_domain_safe(&[0xff, 0xfe]));
+        assert!(cookie_for_jar(&[0xff, 0xfe], Some("example.com")).is_none());
     }
 
     #[test]
-    fn cookie_domain_handles_multibyte_attribute_boundary() {
-        // Valid UTF-8 with a multibyte char (ï = 0xc3 0xaf) straddling byte
-        // index 7 of an attribute. Slicing at a fixed byte index would panic;
-        // boundary-safe parsing must treat this as a host-only cookie.
-        let mut header = b"session=x; abcdef".to_vec();
-        header.extend_from_slice("ï".as_bytes());
-        header.extend_from_slice(b"=1");
-        assert!(std::str::from_utf8(&header).is_ok());
-        assert!(is_cookie_domain_safe(&header));
-    }
-
-    #[test]
-    fn extract_cookie_domain_ignores_empty_domain() {
-        // An empty Domain= keeps the cookie host-only (no Domain extracted).
-        assert_eq!(extract_cookie_domain("session=abc; Domain=; Path=/"), None);
-    }
-
-    #[test]
-    fn extract_cookie_domain_handles_multibyte_non_domain_attribute() {
-        assert_eq!(
-            extract_cookie_domain("session=abc; nï=1; Domain=test.com"),
-            Some("test.com")
-        );
+    fn panic_error_keeps_the_panic_message() {
+        let payload = std::panic::catch_unwind(|| panic!("boom")).expect_err("panics");
+        assert_eq!(panic_error(&*payload).details["reason"], "boom");
+        let payload = std::panic::catch_unwind(|| panic!("boom {}", 1)).expect_err("panics");
+        assert_eq!(panic_error(&*payload).details["reason"], "boom 1");
     }
 }

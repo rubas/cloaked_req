@@ -208,12 +208,12 @@ dependencies = [
 name = "cloaked_req_native"
 version = "0.7.0"
 dependencies = [
+ "bytes",
+ "cookie",
  "futures-util",
- "http",
  "lru",
  "psl",
  "rustler",
- "serde",
  "serde_json",
  "tokio",
  "wreq",

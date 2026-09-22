@@ -102,13 +102,13 @@ jobs:
             runner: ubuntu-22.04-arm
             lib_ext: so
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
             lib_ext: dylib
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && needs.detect.outputs.tag || github.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', needs.detect.outputs.tag) || github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image

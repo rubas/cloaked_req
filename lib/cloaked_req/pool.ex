@@ -65,8 +65,6 @@ defmodule CloakedReq.Pool do
   alias CloakedReq.Native
   alias CloakedReq.Request
 
-  @default_connect_timeout 30_000
-
   @enforce_keys [:ref, :connect_timeout]
   defstruct [:ref, :connect_timeout]
 
@@ -83,15 +81,11 @@ defmodule CloakedReq.Pool do
   """
   @spec new(keyword()) :: {:ok, t()} | {:error, Error.t()}
   def new(options \\ []) when is_list(options) do
-    impersonate = Keyword.get(options, :impersonate)
-    insecure_opt = Keyword.get(options, :insecure_skip_verify, false)
-    connect_timeout_opt = Keyword.get(options, :connect_timeout, @default_connect_timeout)
-    idle_opt = Keyword.get(options, :pool_idle_timeout)
-
-    with {:ok, emulation} <- Request.normalize_impersonate(impersonate),
-         {:ok, insecure_skip_verify} <- Request.normalize_insecure_skip_verify(insecure_opt),
-         {:ok, connect_timeout} <- Request.normalize_connect_timeout(connect_timeout_opt, "connect_timeout"),
-         {:ok, pool_idle_timeout} <- normalize_pool_idle_timeout(idle_opt),
+    with {:ok, options} <- validate_options(options),
+         {:ok, emulation} <- Request.normalize_impersonate(options[:impersonate]),
+         {:ok, insecure_skip_verify} <- Request.normalize_insecure_skip_verify(options[:insecure_skip_verify]),
+         {:ok, connect_timeout} <- Request.normalize_connect_timeout(options[:connect_timeout], "connect_timeout"),
+         {:ok, pool_idle_timeout} <- normalize_pool_idle_timeout(options[:pool_idle_timeout]),
          {:ok, ref} <-
            Native.new_pool(%{
              emulation: emulation,
@@ -118,6 +112,22 @@ defmodule CloakedReq.Pool do
     case new(options) do
       {:ok, pool} -> pool
       {:error, error} -> raise ArgumentError, Error.format(error)
+    end
+  end
+
+  @spec validate_options(keyword()) :: {:ok, keyword()} | {:error, Error.t()}
+  defp validate_options(options) do
+    case Keyword.validate(options,
+           impersonate: nil,
+           insecure_skip_verify: false,
+           connect_timeout: 30_000,
+           pool_idle_timeout: nil
+         ) do
+      {:ok, options} ->
+        {:ok, options}
+
+      {:error, keys} ->
+        {:error, Error.new(:invalid_request, "unknown pool options: " <> Enum.map_join(keys, ", ", &inspect/1))}
     end
   end
 

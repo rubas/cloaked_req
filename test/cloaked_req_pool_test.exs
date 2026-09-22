@@ -82,6 +82,11 @@ defmodule CloakedReq.PoolTest do
     assert {:error, %Error{type: :invalid_request}} = Pool.new(pool_idle_timeout: -1)
   end
 
+  test "unknown option is rejected with its name" do
+    assert {:error, %Error{type: :invalid_request, message: "unknown pool options: :impersonation"}} =
+             Pool.new(impersonation: :chrome_136)
+  end
+
   # -------------------------------------------------------------------
   # Pool request path (e2e)
   # -------------------------------------------------------------------

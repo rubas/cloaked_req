@@ -32,6 +32,7 @@ nif_version_2_17 = ["rustler/nif_version_2_17"]
 [profile.release]
 lto = "thin"
 codegen-units = 16
+strip = true
 
 [profile.dev]
 debug = "line-tables-only"

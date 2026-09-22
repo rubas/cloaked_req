@@ -25,9 +25,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake golang-go
-
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
@@ -74,9 +71,6 @@ jobs:
           curl -fsSL https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz \
             | tar -xz -C "$HOME/.local/bin" zizmor
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake golang-go
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:

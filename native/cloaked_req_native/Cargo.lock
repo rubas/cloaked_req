@@ -210,11 +210,9 @@ version = "0.7.0"
 dependencies = [
  "bytes",
  "futures-util",
- "http",
  "lru",
  "psl",
  "rustler",
- "serde",
  "serde_json",
  "tokio",
  "wreq",

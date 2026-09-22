@@ -12,13 +12,11 @@ crate-type = ["cdylib"]
 [dependencies]
 bytes = "1"
 futures-util = "0.3"
-http = "1"
 lru = "0.18"
 psl = "2"
 rustler = { version = "0.38", default-features = false, features = ["derive", "serde"] }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 wreq = { version = "0.16.1", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies", "stream"] }
 wreq-proto = "0.2"
 wreq-util = { version = "0.2.0", features = ["emulation-serde", "emulation-compression"] }
@@ -32,7 +30,6 @@ nif_version_2_17 = ["rustler/nif_version_2_17"]
 
 [profile.release]
 lto = "thin"
-codegen-units = 16
 
 [profile.dev]
 debug = "line-tables-only"

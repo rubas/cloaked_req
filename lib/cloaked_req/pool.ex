@@ -5,7 +5,7 @@ defmodule CloakedReq.Pool do
   By default `CloakedReq` routes every request through a shared, bounded client
   cache: requests with the same impersonation profile, TLS verification, and
   connect timeout reuse one client and its connection pool. A `Pool` gives a
-  caller its own isolated client instead — its connections, TLS session cache,
+  caller its own isolated client instead: its connections, TLS session cache,
   and HTTP/2 multiplexing are never shared with any other identity. Build one
   per identity (per account, per proxy persona, per crawl) so a connection
   opened for one is never reused for another.
@@ -19,7 +19,7 @@ defmodule CloakedReq.Pool do
   keeps up to 20 idle connections per host.
 
   The client is garbage-collected by the BEAM when the `Pool` struct is no
-  longer referenced, so its idle connections close on their own — a worker that
+  longer referenced, so its idle connections close on their own, so a worker that
   crashes without an explicit teardown cannot leak the pool. To rotate a pool's
   identity (for example after its upstream proxy exit changes), build a new pool
   and drop the old struct; the old client's connections close once it is

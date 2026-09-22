@@ -2,9 +2,9 @@ defmodule CloakedReq do
   @moduledoc """
   Req adapter powered by Rust `wreq`.
 
-  - `attach/2` — set adapter and merge options
-  - `impersonate/2` — set browser profile
-  - `run/1` — adapter entry point, called by Req
+  - `attach/2`: set adapter and merge options
+  - `impersonate/2`: set browser profile
+  - `run/1`: adapter entry point, called by Req
   """
 
   alias CloakedReq.AdapterError

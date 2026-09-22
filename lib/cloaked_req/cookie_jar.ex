@@ -10,12 +10,12 @@ defmodule CloakedReq.CookieJar do
 
       jar = CloakedReq.CookieJar.new()
 
-      # Login — server sets session cookie
+      # Login: server sets session cookie
       Req.new(url: "https://example.com/login")
       |> CloakedReq.attach(impersonate: :chrome_136, cookie_jar: jar)
       |> Req.post!(body: "user=admin&pass=secret")
 
-      # Dashboard — session cookie sent automatically
+      # Dashboard: session cookie sent automatically
       Req.new(url: "https://example.com/dashboard")
       |> CloakedReq.attach(impersonate: :chrome_136, cookie_jar: jar)
       |> Req.get!()

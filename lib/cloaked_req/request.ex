@@ -193,7 +193,7 @@ defmodule CloakedReq.Request do
     with {:ok, proxy_headers} <- normalize_proxy_headers(headers) do
       {:ok,
        %{
-         url: "#{scheme}://#{host}:#{port}",
+         url: URI.to_string(%URI{scheme: Atom.to_string(scheme), host: host, port: port}),
          headers: proxy_headers
        }}
     end

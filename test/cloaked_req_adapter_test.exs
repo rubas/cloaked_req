@@ -195,6 +195,16 @@ defmodule CloakedReq.AdapterTest do
              Request.to_native_payload(request)
   end
 
+  test "IPv6 proxy host is bracketed in the proxy URL" do
+    request =
+      [url: "https://example.com", connect_options: [proxy: {:http, "::1", 8080, []}]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:proxy] == %{url: "http://[::1]:8080", headers: []}
+  end
+
   test "proxy_headers without proxy returns error" do
     request =
       [url: "https://example.com", connect_options: [proxy_headers: [{"proxy-authorization", "Basic token"}]]]

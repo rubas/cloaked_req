@@ -9,10 +9,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Fixed
 
 - Req never retried a transport failure. The adapter returned `%CloakedReq.AdapterError{}` for every failure, and Req's `retry` step only retries `%Req.TransportError{}`. A timeout, a refused connection, or a closed connection now returns `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or `:closed`, so the default `retry: :safe_transient` retries it. Change a match on `%CloakedReq.AdapterError{error: %{type: :transport_error}}` for these cases to `%Req.TransportError{}`. Every other failure still returns `%CloakedReq.AdapterError{}`.
+- A timeout or a closed connection while the response body streams in also returns `%Req.TransportError{}` now, the same as before the headers arrive.
 - A request with an explicit `cookie` header and a cookie jar sent two `Cookie` headers. The explicit header now wins and the jar is skipped for that request, the rule wreq applies on its own cookie path.
 
 ### Changed
 
+- Update Mint to 1.10.1 in the lock file. Mint 1.9.3 has three advisories in its HTTP/1 chunked response parser (CVE-2026-82672, CVE-2026-82728, CVE-2026-82729). Mint comes from Req, so update it in your own lock file too.
+- The Rust tests run once per CI run, in their own job. The fingerprint smoke test reaches thumbprint.me and now runs only with `task test:rust:external`.
 - The NIF no longer repeats the RFC 6265 domain match before a cookie reaches the jar. wreq's jar applies the same rule. The public-suffix check stays in the NIF, because the jar has none.
 - `release.yml` no longer writes and pushes `checksum-Elixir.CloakedReq.Native.exs`.
   `main` is protected. It needs signed commits and a pull request, thus the push

@@ -389,13 +389,12 @@ async fn read_body_with_limit(
 
     let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.next().await.transpose().map_err(|reason| {
-        NativeError::new(
-            "transport_error",
-            "failed to read response body",
-            json!({"reason": reason.to_string(), "debug": format!("{reason:?}")}),
-        )
-    })? {
+    while let Some(chunk) = stream
+        .next()
+        .await
+        .transpose()
+        .map_err(|reason| transport_error("failed to read response body", &reason))?
+    {
         if body.len() + chunk.len() > limit {
             return Err(NativeError::new(
                 "invalid_request",
@@ -486,13 +485,10 @@ async fn execute_request_async(
         builder = builder.body(body);
     }
 
-    let response = builder.send().await.map_err(|reason| {
-        let mut details = json!({"reason": reason.to_string(), "debug": format!("{reason:?}")});
-        if let Some(kind) = transport_error_kind(&reason) {
-            details["kind"] = json!(kind);
-        }
-        NativeError::new("transport_error", "request execution failed", details)
-    })?;
+    let response = builder
+        .send()
+        .await
+        .map_err(|reason| transport_error("request execution failed", &reason))?;
 
     // The jar applies the RFC 6265 domain match itself. Only the public-suffix
     // rule has to run here, before the header reaches the jar.
@@ -543,6 +539,14 @@ fn execute_request(
     pool: Option<ResourceArc<ClientResource>>,
 ) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
     RUNTIME.block_on(execute_request_async(request, body, cookie_jar, pool))
+}
+
+fn transport_error(message: &str, reason: &wreq::Error) -> NativeError {
+    let mut details = json!({"reason": reason.to_string(), "debug": format!("{reason:?}")});
+    if let Some(kind) = transport_error_kind(reason) {
+        details["kind"] = json!(kind);
+    }
+    NativeError::new("transport_error", message, details)
 }
 
 /// Names the failure classes Req retries under `retry: :safe_transient`:
@@ -847,6 +851,47 @@ mod tests {
         let error = execute_request(request, None, None, None).expect_err("expected error");
         server.join().expect("server thread must join");
         assert_eq!(error.type_name, "transport_error");
+        assert_eq!(error.details["kind"], "closed", "{:?}", error.details);
+    }
+
+    fn spawn_partial_body_server(hold_ms: u64) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener must bind");
+        let addr = listener.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server must accept");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nok");
+            let _ = stream.flush();
+            thread::sleep(StdDuration::from_millis(hold_ms));
+        });
+        (format!("http://{addr}/"), server)
+    }
+
+    #[test]
+    fn returns_timeout_kind_when_body_stalls_past_receive_timeout() {
+        let (url, server) = spawn_partial_body_server(400);
+
+        let mut request = base_request();
+        request.url = url;
+        request.receive_timeout_ms = 150;
+
+        let error = execute_request(request, None, None, None).expect_err("expected error");
+        server.join().expect("server thread must join");
+        assert_eq!(error.message, "failed to read response body");
+        assert_eq!(error.details["kind"], "timeout", "{:?}", error.details);
+    }
+
+    #[test]
+    fn returns_closed_kind_when_server_closes_mid_body() {
+        let (url, server) = spawn_partial_body_server(0);
+
+        let mut request = base_request();
+        request.url = url;
+
+        let error = execute_request(request, None, None, None).expect_err("expected error");
+        server.join().expect("server thread must join");
+        assert_eq!(error.message, "failed to read response body");
         assert_eq!(error.details["kind"], "closed", "{:?}", error.details);
     }
 

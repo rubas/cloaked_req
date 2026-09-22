@@ -195,6 +195,16 @@ defmodule CloakedReq.AdapterTest do
     assert payload[:proxy] == %{url: "http://[::1]:8080", headers: []}
   end
 
+  test "bracketed IPv6 proxy host is kept as is in the proxy URL" do
+    request =
+      [url: "https://example.com", connect_options: [proxy: {:http, "[::1]", 8080, []}]]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:ok, {payload, _body}} = Request.to_native_payload(request)
+    assert payload[:proxy] == %{url: "http://[::1]:8080", headers: []}
+  end
+
   test "proxy_headers without proxy returns error" do
     request =
       [url: "https://example.com", connect_options: [proxy_headers: [{"proxy-authorization", "Basic token"}]]]
@@ -202,6 +212,36 @@ defmodule CloakedReq.AdapterTest do
       |> CloakedReq.attach()
 
     assert {:error, %Error{type: :invalid_request, message: "connect_options proxy_headers require proxy"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "proxy_headers map returns error" do
+    request =
+      [
+        url: "https://example.com",
+        connect_options: [
+          proxy: {:http, "127.0.0.1", 8888, []},
+          proxy_headers: %{"proxy-authorization" => "Basic token"}
+        ]
+      ]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error, %Error{type: :invalid_request, message: "connect_options proxy_headers must be a list"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "proxy_headers with a non-binary value returns error" do
+    request =
+      [
+        url: "https://example.com",
+        connect_options: [proxy: {:http, "127.0.0.1", 8888, []}, proxy_headers: [{"proxy-authorization", :token}]]
+      ]
+      |> Req.new()
+      |> CloakedReq.attach()
+
+    assert {:error,
+            %Error{type: :invalid_request, message: "connect_options proxy_headers must be binary header pairs"}} =
              Request.to_native_payload(request)
   end
 
@@ -407,6 +447,16 @@ defmodule CloakedReq.AdapterTest do
       [url: "https://example.com"]
       |> Req.new()
       |> CloakedReq.attach(local_address: "not-an-ip")
+
+    assert {:error, %Error{type: :invalid_request, message: "local_address is not a valid IP address"}} =
+             Request.to_native_payload(request)
+  end
+
+  test "local_address with an IPv6 scope returns error" do
+    request =
+      [url: "https://example.com"]
+      |> Req.new()
+      |> CloakedReq.attach(local_address: "fe80::1%eth0")
 
     assert {:error, %Error{type: :invalid_request, message: "local_address is not a valid IP address"}} =
              Request.to_native_payload(request)

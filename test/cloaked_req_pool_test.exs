@@ -71,6 +71,15 @@ defmodule CloakedReq.PoolTest do
              Pool.new(impersonation: :chrome_136)
   end
 
+  test "a duplicated option keeps the last value" do
+    assert {:ok, %Pool{connect_timeout: 5_000}} = Pool.new(connect_timeout: 1_000, connect_timeout: 5_000)
+  end
+
+  test "a non-keyword entry is rejected" do
+    assert {:error, %Error{type: :invalid_request, message: "pool options must be a keyword list"}} =
+             Pool.new([{"impersonate", :chrome_136}])
+  end
+
   # -------------------------------------------------------------------
   # Pool request path (e2e)
   # -------------------------------------------------------------------

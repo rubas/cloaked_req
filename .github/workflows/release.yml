@@ -30,7 +30,6 @@ jobs:
       should_release: ${{ steps.resolve.outputs.should_release }}
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
-      tag_exists: ${{ steps.resolve.outputs.tag_exists }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,7 +53,6 @@ jobs:
             SHOULD_RELEASE=true
           else
             VERSION="$(sed -n 's/^  @version "\([^"]*\)"$/\1/p' mix.exs | head -n1)"
-            PREVIOUS_VERSION="$(git show HEAD^:mix.exs 2>/dev/null | sed -n 's/^  @version "\([^"]*\)"$/\1/p' | head -n1)"
 
             if [ -z "$VERSION" ]; then
               echo "Failed to read current mix.exs version" >&2
@@ -63,23 +61,18 @@ jobs:
 
             TAG="v$VERSION"
 
-            if [ "$VERSION" = "$PREVIOUS_VERSION" ]; then
+            # Decide from the tag, not from HEAD^. Then a push with several commits, or the next run
+            # after a cancelled one, still releases a version that has no tag.
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
               SHOULD_RELEASE=false
             else
               SHOULD_RELEASE=true
             fi
           fi
 
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            TAG_EXISTS=true
-          else
-            TAG_EXISTS=false
-          fi
-
           echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
 
   build:
     needs: detect
@@ -188,7 +181,7 @@ jobs:
     name: Create release tag
     runs-on: ubuntu-latest
     needs: detect
-    if: github.event_name == 'push' && needs.detect.outputs.should_release == 'true' && needs.detect.outputs.tag_exists != 'true'
+    if: github.event_name == 'push' && needs.detect.outputs.should_release == 'true'
     permissions:
       contents: write # push the release tag back to the repository
     concurrency:

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## Unreleased
+
+### Fixed
+
+- `:local_address` accepted strings such as `"127.1"` that the NIF then rejected. The adapter now sends the canonical form, for example `"127.0.0.1"`. An IPv6 scope such as `%eth0` is dropped.
+- A proxy with an IPv6 host such as `{:http, "::1", 8080, []}` failed with `invalid proxy URL`. The host is now bracketed.
+- `CloakedReq.Pool.new/1` ignored unknown options, so a typo such as `impersonation:` built a pool without a profile. It now returns an `:invalid_request` error that names the unknown keys.
+
+### Changed
+
+- `connect_options: [proxy_headers: ...]` accepts only a list of `{name, value}` pairs, the same as Mint. A map is rejected.
+- Responses no longer carry the private `:cloaked_req_url` key. wreq does not follow redirects, so it always held the request URL. Use `request.url` instead.
+- `CloakedReq.AdapterError.exception/1` accepts only a `%CloakedReq.Error{}`.
+- README Limitations lists the Req options the adapter does not support.
+
 ## [0.7.0] - 22.09.2026
 
 ### Fixed

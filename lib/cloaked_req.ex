@@ -95,9 +95,8 @@ defmodule CloakedReq do
          {:ok, {payload, body}} <- Request.to_native_payload(request),
          payload = apply_pool_connect_timeout(payload, pool),
          {:ok, response_meta, response_body} <-
-           Native.perform_request(payload, body, jar_ref, pool_ref),
-         {:ok, req_response} <- Response.from_native(response_meta, response_body) do
-      {request, req_response}
+           Native.perform_request(payload, body, jar_ref, pool_ref) do
+      {request, Response.from_native(response_meta, response_body)}
     else
       {:error, %Error{type: :transport_error, details: %{"kind" => kind}}} ->
         {request, %Req.TransportError{reason: transport_reason(kind)}}

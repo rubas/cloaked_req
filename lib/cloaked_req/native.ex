@@ -167,7 +167,6 @@ defmodule CloakedReq.Native do
   defp to_error_type("invalid_request"), do: :invalid_request
   defp to_error_type("transport_error"), do: :transport_error
   defp to_error_type("runtime_error"), do: :runtime_error
-  defp to_error_type("invalid_native_response"), do: :invalid_native_response
   defp to_error_type(_), do: :native_error
 
   defp nif_create_cookie_jar, do: :erlang.nif_error(:nif_not_loaded)

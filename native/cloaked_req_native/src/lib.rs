@@ -507,7 +507,6 @@ async fn execute_request_async(
     }
 
     let status = response.status().as_u16();
-    let url = response.uri().to_string();
     let headers = response
         .headers()
         .iter()
@@ -521,14 +520,7 @@ async fn execute_request_async(
 
     let body_bytes = read_body_with_limit(response, request.max_body_size_bytes).await?;
 
-    Ok((
-        NativeResponseMeta {
-            status,
-            url,
-            headers,
-        },
-        body_bytes,
-    ))
+    Ok((NativeResponseMeta { status, headers }, body_bytes))
 }
 
 #[cfg(test)]
@@ -1082,7 +1074,6 @@ mod tests {
             Ok((
                 NativeResponseMeta {
                     status: 200,
-                    url: "https://example.com".to_string(),
                     headers: vec![],
                 },
                 Vec::<u8>::new(),

@@ -4,7 +4,6 @@ use serde::Serialize;
 #[derive(Debug, Serialize, NifMap)]
 pub struct NativeResponseMeta {
     pub status: u16,
-    pub url: String,
     pub headers: Vec<(String, String)>,
 }
 
@@ -16,7 +15,6 @@ mod tests {
     fn serializes_expected_shape() {
         let meta = NativeResponseMeta {
             status: 200,
-            url: "https://example.com/path".to_string(),
             headers: vec![
                 ("content-type".to_string(), "text/plain".to_string()),
                 ("x-request-id".to_string(), "abc-123".to_string()),
@@ -27,7 +25,6 @@ mod tests {
         let decoded: serde_json::Value = serde_json::from_str(&json).expect("should parse back");
 
         assert_eq!(decoded["status"], 200);
-        assert_eq!(decoded["url"], "https://example.com/path");
         assert_eq!(decoded["headers"][0][0], "content-type");
         assert_eq!(decoded["headers"][0][1], "text/plain");
         assert_eq!(decoded["headers"][1][0], "x-request-id");
@@ -38,7 +35,6 @@ mod tests {
     fn serializes_no_headers() {
         let meta = NativeResponseMeta {
             status: 204,
-            url: "https://example.com".to_string(),
             headers: vec![],
         };
 
@@ -57,7 +53,6 @@ mod tests {
 
         let meta = NativeResponseMeta {
             status: 200,
-            url: "https://example.com".to_string(),
             headers,
         };
 

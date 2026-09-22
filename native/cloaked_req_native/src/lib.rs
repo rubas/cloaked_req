@@ -804,9 +804,9 @@ mod tests {
             let (mut stream, _) = listener.accept().expect("server must accept");
             let mut buffer = [0_u8; 1024];
             let _ = stream.read(&mut buffer);
-            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\n");
-            for _ in 0..8 {
-                thread::sleep(StdDuration::from_millis(60));
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 60\r\n\r\n");
+            for _ in 0..60 {
+                thread::sleep(StdDuration::from_millis(20));
                 let _ = stream.write_all(b"x");
                 let _ = stream.flush();
             }
@@ -814,13 +814,13 @@ mod tests {
 
         let mut request = base_request();
         request.url = format!("http://{addr}/");
-        request.receive_timeout_ms = 200;
+        request.receive_timeout_ms = 1_000;
 
         let (meta, body) =
             execute_request(request, None, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
         assert_eq!(meta.status, 200);
-        assert_eq!(body, b"xxxxxxxx");
+        assert_eq!(body, [b'x'; 60]);
     }
 
     #[test]

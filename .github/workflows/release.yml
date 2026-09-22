@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - mix.exs
   workflow_dispatch:
     inputs:
       tag:
@@ -44,6 +46,10 @@ jobs:
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             TAG="$INPUT_TAG"
+            if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "Tag $TAG does not exist" >&2
+              exit 1
+            fi
             VERSION="${TAG#v}"
             SHOULD_RELEASE=true
           else
@@ -75,10 +81,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
 
-      - name: Skip when version did not change
-        if: steps.resolve.outputs.should_release != 'true'
-        run: echo "mix.exs version unchanged; release skipped"
-
   build:
     needs: detect
     if: needs.detect.outputs.should_release == 'true'
@@ -94,21 +96,19 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-            lib_prefix: lib
+            runner: ubuntu-22.04
             lib_ext: so
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
-            lib_prefix: lib
+            runner: ubuntu-22.04-arm
             lib_ext: so
           - target: aarch64-apple-darwin
-            runner: macos-14
-            lib_prefix: lib
+            runner: macos-15
             lib_ext: dylib
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', needs.detect.outputs.tag) || github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
@@ -124,15 +124,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake perl libclang-dev
 
-      - name: Install aarch64-linux-gnu cross toolchain
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get install -y crossbuild-essential-arm64
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> "$GITHUB_ENV"
-          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
-
       # --- Build ---
 
       - name: Cargo cache
@@ -142,15 +133,30 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             native/cloaked_req_native/target
-          key: release-${{ matrix.target }}-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
-          restore-keys: release-${{ matrix.target }}-
+          key: release-${{ matrix.target }}-${{ matrix.runner }}-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
+          restore-keys: release-${{ matrix.target }}-${{ matrix.runner }}-
 
       - name: Build NIF
         working-directory: native/cloaked_req_native
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          CARGO_PROFILE_RELEASE_STRIP: "true"
         run: cargo build --release --target "$TARGET"
+
+      - name: Check glibc floor
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          # README promises glibc 2.34 (RHEL 9, Amazon Linux 2023). This check holds that floor, not
+          # the runner image: Ubuntu 22.04 ships glibc 2.35. Fail on any newer version the NIF requires.
+          VERSIONS="$(objdump -p "native/cloaked_req_native/target/${TARGET}/release/libcloaked_req_native.so")"
+          if grep -E 'GLIBC_2\.(3[5-9]|[4-9][0-9])|GLIBC_ABI_DT_RELR' <<< "$VERSIONS"; then
+            echo "The NIF needs a glibc newer than 2.34" >&2
+            exit 1
+          fi
 
       # --- Package ---
 
@@ -158,14 +164,13 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-          LIB_PREFIX: ${{ matrix.lib_prefix }}
           LIB_EXT: ${{ matrix.lib_ext }}
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           SRC_DIR="native/cloaked_req_native/target/${TARGET}/release"
-          SRC_NAME="${LIB_PREFIX}cloaked_req_native.${LIB_EXT}"
+          SRC_NAME="libcloaked_req_native.${LIB_EXT}"
           # rustler_precompiled requests the .so suffix on every platform (incl. macOS), so publish as .so
-          LIB_NAME="${LIB_PREFIX}cloaked_req_native-v${VERSION}-nif-${NIF_VERSION}-${TARGET}.so"
+          LIB_NAME="libcloaked_req_native-v${VERSION}-nif-${NIF_VERSION}-${TARGET}.so"
 
           # Rename to versioned name expected by rustler_precompiled
           cp "${SRC_DIR}/${SRC_NAME}" "${SRC_DIR}/${LIB_NAME}"
@@ -217,11 +222,6 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}-release
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          persist-credentials: false
-
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: nif-*
@@ -239,7 +239,6 @@ jobs:
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 # zizmor: ignore[superfluous-actions] action handles release asset upload and notes generation beyond a plain gh release call
         with:
           tag_name: ${{ needs.detect.outputs.tag }}
-          target_commitish: main
           files: |
             artifacts/*.tar.gz
             artifacts/SHA256SUMS

@@ -6,8 +6,19 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+### Fixed
+
+- The x86_64 Linux NIF of 0.7.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. Ubuntu 22.04 ships glibc 2.35, so a release check holds the floor: it fails when a NIF needs a glibc newer than 2.34.
+- A manual release dispatch built `main` but published the files under the given tag. It now builds the tag, and it fails when the tag does not exist.
+- HexDocs "View source" links point to the release tag, not to `main`.
+
 ### Changed
 
+- The release NIFs are stripped. The x86_64 download is about 9% smaller.
+- The aarch64 Linux NIF builds natively on an arm runner instead of with a cross toolchain.
+- CI now runs `cargo fmt --check`, clippy, `mix deps.audit`, and sobelow, and it compiles with `--warnings-as-errors`, the same as `task check`.
+- README lists the precompiled targets and the steps to build the NIF from source.
+- `RELEASE.md` uses git commands and a checksum step that always refreshes the new version.
 - Tests only. The `local_address` test binds `127.0.0.2`, so it fails when the option is lost. The public-suffix cookie test goes through a proxy, so it reaches the check. The pool test checks the pool's user-agent on the wire. The redirect cookie test checks the redirect target.
 - New test: a malformed response returns `%CloakedReq.AdapterError{}` and Req does not retry it.
 - Duplicate tests, the unused `TestServer` host option, and a dead check in `bench/adapter_perf.exs` are removed.

@@ -6,7 +6,6 @@
         included: [
           "{mix,.formatter,.credo}.exs",
           "lib/",
-          "native/",
           "test/"
         ],
         excluded: [~r"/_build/", ~r"/deps/", ~r"/node_modules/"]

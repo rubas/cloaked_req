@@ -32,6 +32,7 @@ defmodule CloakedReq.MixProject do
       main: "readme",
       extras: ["README.md", "CHANGELOG.md"],
       source_url: "https://github.com/rubas/cloaked_req",
+      source_ref: "v#{@version}",
       homepage_url: "https://github.com/rubas/cloaked_req"
     ]
   end

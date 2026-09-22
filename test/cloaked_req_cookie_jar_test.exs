@@ -1,7 +1,7 @@
 defmodule CloakedReq.CookieJarTest do
   @moduledoc """
-  Verifies cookie jar lifecycle, persistence, isolation, header precedence, and domain
-  validation through the full Elixir -> NIF -> Rust wreq pipeline.
+  Verifies cookie jar persistence, isolation, header precedence, domain validation, and
+  redirects through the full Elixir -> NIF -> Rust wreq pipeline.
   """
 
   use ExUnit.Case, async: true
@@ -10,22 +10,6 @@ defmodule CloakedReq.CookieJarTest do
   alias CloakedReq.TestServer
 
   doctest CookieJar, import: false
-
-  # -------------------------------------------------------------------
-  # Lifecycle
-  # -------------------------------------------------------------------
-
-  test "new/0 returns a CookieJar struct with an opaque ref" do
-    jar = CookieJar.new()
-    assert %CookieJar{} = jar
-    assert is_reference(jar.ref)
-  end
-
-  test "two jars have different references" do
-    jar1 = CookieJar.new()
-    jar2 = CookieJar.new()
-    refute jar1.ref == jar2.ref
-  end
 
   # -------------------------------------------------------------------
   # Cookie persistence (e2e)
@@ -167,19 +151,48 @@ defmodule CloakedReq.CookieJarTest do
     refute raw =~ "x=1"
   end
 
-  test "cookie with Domain=com is rejected by PSL validation" do
+  test "cookie with a Domain equal to the IP host is stored" do
     jar = CookieJar.new()
 
-    # Server tries to set a cookie for the public suffix "com"
-    set_response = TestServer.build_response(200, [{"set-cookie", "evil=1; Domain=com; Path=/"}], "ok")
+    set_response = TestServer.build_response(200, [{"set-cookie", "x=1; Domain=127.0.0.1; Path=/"}], "ok")
     {set_url, _set_server} = TestServer.start(response: set_response)
     req = [url: set_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
     assert {:ok, _} = Req.request(req)
 
-    # Verify cookie was NOT stored
     verify_response = TestServer.build_response(200, [], "ok")
     {verify_url, verify_server} = TestServer.start(response: verify_response)
     req = [url: verify_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, _} = Req.request(req)
+
+    raw = TestServer.get_request(verify_server)
+    assert raw =~ "x=1"
+  end
+
+  test "cookie with Domain=com is rejected by PSL validation" do
+    jar = CookieJar.new()
+
+    # Both requests go through a TestServer proxy, so the request host is www.a.com.
+    # The jar's own domain match accepts Domain=com for that host; only the PSL check rejects it.
+    set_response = TestServer.build_response(200, [{"set-cookie", "evil=1; Domain=com; Path=/"}], "ok")
+    {set_proxy, _set_server} = TestServer.start(response: set_response)
+    %URI{host: host, port: port} = URI.parse(set_proxy)
+
+    req =
+      [url: "http://www.a.com/", retry: false, connect_options: [proxy: {:http, host, port, []}]]
+      |> Req.new()
+      |> CloakedReq.attach(cookie_jar: jar)
+
+    assert {:ok, _} = Req.request(req)
+
+    verify_response = TestServer.build_response(200, [], "ok")
+    {verify_proxy, verify_server} = TestServer.start(response: verify_response)
+    %URI{host: host, port: port} = URI.parse(verify_proxy)
+
+    req =
+      [url: "http://www.a.com/", retry: false, connect_options: [proxy: {:http, host, port, []}]]
+      |> Req.new()
+      |> CloakedReq.attach(cookie_jar: jar)
+
     assert {:ok, _} = Req.request(req)
 
     raw = TestServer.get_request(verify_server)
@@ -207,14 +220,12 @@ defmodule CloakedReq.CookieJarTest do
   # Redirect with cookies
   # -------------------------------------------------------------------
 
-  test "cookies set during redirect are available for subsequent requests" do
+  test "a cookie set on a redirect is sent to the redirect target" do
     jar = CookieJar.new()
 
-    # Destination server returns 200
     dest_response = TestServer.build_response(200, [{"content-type", "text/plain"}], "arrived")
-    {dest_url, _dest_server} = TestServer.start(response: dest_response)
+    {dest_url, dest_server} = TestServer.start(response: dest_response)
 
-    # Origin server redirects with a set-cookie header
     redirect_response =
       TestServer.build_response(
         302,
@@ -227,36 +238,6 @@ defmodule CloakedReq.CookieJarTest do
     req = [url: origin_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
     assert {:ok, %Req.Response{status: 200}} = Req.request(req)
 
-    # Verify cookie from redirect is present in a subsequent request
-    verify_response = TestServer.build_response(200, [], "ok")
-    {verify_url, verify_server} = TestServer.start(response: verify_response)
-    req = [url: verify_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
-    assert {:ok, _} = Req.request(req)
-
-    raw = TestServer.get_request(verify_server)
-    assert raw =~ "redirect_token=abc"
-  end
-
-  test "cookies set on redirect target host are stored for that host" do
-    jar = CookieJar.new()
-
-    dest_response =
-      TestServer.build_response(200, [{"set-cookie", "redirect_token=abc; Domain=127.0.0.1; Path=/"}], "arrived")
-
-    {dest_url, _dest_server} = TestServer.start(response: dest_response)
-
-    redirect_response = TestServer.build_response(302, [{"location", dest_url}], "")
-    {origin_url, _origin_server} = TestServer.start(response: redirect_response, host: "localhost")
-
-    req = [url: origin_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
-    assert {:ok, %Req.Response{status: 200}} = Req.request(req)
-
-    verify_response = TestServer.build_response(200, [], "ok")
-    {verify_url, verify_server} = TestServer.start(response: verify_response)
-    req = [url: verify_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
-    assert {:ok, _} = Req.request(req)
-
-    raw = TestServer.get_request(verify_server)
-    assert raw =~ "redirect_token=abc"
+    assert TestServer.get_request(dest_server) =~ "redirect_token=abc"
   end
 end

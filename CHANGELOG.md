@@ -22,6 +22,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - The `details` of a request body over `:max_body_size` now use string keys, `%{"size" => ..., "limit" => ...}`, the same as every other error. `CloakedReq.Error.type` is now typed as the closed set of error types.
 - The response body is copied once into the BEAM binary, not twice.
 - The NIF drops its direct `http` and `serde` dependencies.
+- Tests only. The `local_address` test binds `127.0.0.2`, so it fails when the option is lost. The public-suffix cookie test goes through a proxy, so it reaches the check. The pool test checks the pool's user-agent on the wire. The redirect cookie test checks the redirect target.
+- New test: a malformed response returns `%CloakedReq.AdapterError{}` and Req does not retry it.
+- Duplicate tests, the unused `TestServer` host option, and a dead check in `bench/adapter_perf.exs` are removed.
 
 ## [0.7.0] - 22.09.2026
 

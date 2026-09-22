@@ -7,7 +7,7 @@
 defmodule Bench.Server do
   @moduledoc false
 
-  @body Jason.encode!(%{
+  @body JSON.encode!(%{
           url: "http://127.0.0.1/get",
           headers: %{
             "Accept" => "*/*",
@@ -45,19 +45,7 @@ defmodule Bench.Server do
     {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true, ip: {127, 0, 0, 1}])
     {:ok, port} = :inet.port(listen)
 
-    {pid, ref} =
-      spawn_monitor(fn ->
-        accept_loop(listen)
-      end)
-
-    # Verify the server is alive before returning
-    receive do
-      {:DOWN, ^ref, :process, ^pid, reason} ->
-        raise "Bench.Server crashed on start: #{inspect(reason)}"
-    after
-      0 -> :ok
-    end
-
+    pid = spawn(fn -> accept_loop(listen) end)
     {port, pid}
   end
 

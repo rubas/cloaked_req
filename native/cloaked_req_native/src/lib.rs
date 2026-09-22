@@ -7,6 +7,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
+use bytes::Bytes;
 use error::NativeError;
 use futures_util::future::{AbortHandle, Abortable};
 use futures_util::{FutureExt, StreamExt};
@@ -293,43 +294,31 @@ fn nif_perform_request<'a>(
 
 fn encode_request_result<'a>(
     env: Env<'a>,
-    result: Result<(NativeResponseMeta, Vec<u8>), NativeError>,
+    result: Result<(NativeResponseMeta, Vec<Bytes>), NativeError>,
 ) -> Term<'a> {
     match result {
-        Ok((meta, response_body)) => {
-            let mut new_bin = NewBinary::new(env, response_body.len());
-            new_bin.as_mut_slice().copy_from_slice(&response_body);
-            let body_binary = Binary::from(new_bin);
-            (ok(), meta, body_binary).encode(env)
+        Ok((meta, chunks)) => {
+            let mut body = NewBinary::new(env, chunks.iter().map(Bytes::len).sum());
+            let mut offset = 0;
+            for chunk in chunks {
+                body.as_mut_slice()[offset..offset + chunk.len()].copy_from_slice(&chunk);
+                offset += chunk.len();
+            }
+            (ok(), meta, Binary::from(body)).encode(env)
         }
         Err(native_error) => (error(), native_error).encode(env),
     }
 }
 
+/// Keeps the refcounted chunks wreq yields, so the copy into the BEAM binary
+/// is the only copy of the body.
 async fn read_body_with_limit(
     response: wreq::Response,
     max_size: Option<u64>,
-) -> Result<Vec<u8>, NativeError> {
+) -> Result<Vec<Bytes>, NativeError> {
     let limit = max_size.unwrap_or(u64::MAX) as usize;
-
-    let content_length = response
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok());
-
-    // The streaming loop below enforces the real limit, so the Content-Length
-    // header is only a sizing hint here. Clamp the hint: a hostile server
-    // claiming a huge Content-Length must not drive a giant Vec::with_capacity
-    // whose allocation failure aborts the whole BEAM VM. extend_from_slice
-    // still grows geometrically for genuinely large bodies.
-    const PREALLOC_CAP: usize = 64 * 1024;
-
-    let mut body = match content_length {
-        Some(len) if len <= limit => Vec::with_capacity(len.min(PREALLOC_CAP)),
-        _ => Vec::new(),
-    };
-
+    let mut size = 0;
+    let mut chunks = Vec::new();
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream
@@ -338,17 +327,18 @@ async fn read_body_with_limit(
         .transpose()
         .map_err(|reason| transport_error("failed to read response body", &reason))?
     {
-        if body.len() + chunk.len() > limit {
+        size += chunk.len();
+        if size > limit {
             return Err(NativeError::new(
                 "invalid_request",
                 "response body exceeds max_body_size",
                 json!({"limit": limit}),
             ));
         }
-        body.extend_from_slice(&chunk);
+        chunks.push(chunk);
     }
 
-    Ok(body)
+    Ok(chunks)
 }
 
 async fn execute_request_async(
@@ -356,7 +346,7 @@ async fn execute_request_async(
     body: Option<Vec<u8>>,
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
     pool: Option<ResourceArc<ClientResource>>,
-) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
+) -> Result<(NativeResponseMeta, Vec<Bytes>), NativeError> {
     let client = match &pool {
         Some(p) => p.client.clone(),
         None => get_or_build_client(
@@ -451,7 +441,9 @@ fn execute_request(
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
     pool: Option<ResourceArc<ClientResource>>,
 ) -> Result<(NativeResponseMeta, Vec<u8>), NativeError> {
-    RUNTIME.block_on(execute_request_async(request, body, cookie_jar, pool))
+    RUNTIME
+        .block_on(execute_request_async(request, body, cookie_jar, pool))
+        .map(|(meta, chunks)| (meta, chunks.concat()))
 }
 
 fn transport_error(message: &'static str, reason: &wreq::Error) -> NativeError {
@@ -918,28 +910,6 @@ mod tests {
 
         assert_eq!(meta.status, 200);
         assert_eq!(response_body, b"ok");
-    }
-
-    #[test]
-    fn huge_content_length_does_not_preallocate() {
-        // Content-Length above isize::MAX: an unclamped Vec::with_capacity(len)
-        // would panic ("capacity overflow") or, for in-range huge values, abort
-        // the process on allocation failure. The clamp keeps the hint at 64 KiB,
-        // so the request proceeds and fails cleanly on the truncated body
-        // instead of crashing.
-        let raw_response = b"HTTP/1.1 200 OK\r\ncontent-length: 10000000000000000000\r\nconnection: close\r\n\r\nok".to_vec();
-        let (url, _rx, server) = spawn_test_server(raw_response, 200);
-
-        let mut request = base_request();
-        request.url = url;
-        request.max_body_size_bytes = None; // :unlimited — guard is always true
-
-        let result = execute_request(request, None, None, None);
-        server.join().expect("server thread must join");
-
-        // No panic, no abort: the truncated body surfaces as a transport error.
-        let err = result.expect_err("expected truncated-body error, not a crash");
-        assert_eq!(err.type_name, "transport_error");
     }
 
     #[test]

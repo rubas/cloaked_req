@@ -3,20 +3,19 @@ mod request;
 mod response;
 
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::panic::AssertUnwindSafe;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use error::NativeError;
-use futures_util::StreamExt;
+use futures_util::future::{AbortHandle, Abortable};
+use futures_util::{FutureExt, StreamExt};
 use lru::LruCache;
 use request::{NativePoolConfig, NativeProxyConfig, NativeRequest};
 use response::NativeResponseMeta;
-use rustler::env::SavedTerm;
 use rustler::types::binary::{Binary, NewBinary};
 use rustler::{Encoder, Env, LocalPid, Monitor, OwnedEnv, ResourceArc, Term};
 use serde_json::{Value, json};
-use tokio::task::AbortHandle;
 use wreq::cookie::{CookieStore, Cookies};
 use wreq::header::{HeaderMap, HeaderName, HeaderValue};
 use wreq::{Client, Method, Proxy};
@@ -69,53 +68,14 @@ struct ClientResource {
 
 impl rustler::Resource for ClientResource {}
 
-struct RequestCancellationResource {
-    abort_handle: Mutex<Option<AbortHandle>>,
-    cancelled: AtomicBool,
-}
-
-impl RequestCancellationResource {
-    fn new() -> Self {
-        Self {
-            abort_handle: Mutex::new(None),
-            cancelled: AtomicBool::new(false),
-        }
-    }
-
-    fn set_abort_handle(&self, handle: AbortHandle) {
-        if self.cancelled.load(Ordering::Relaxed) {
-            handle.abort();
-            return;
-        }
-
-        let mut abort_handle = self.abort_handle.lock().unwrap_or_else(|e| e.into_inner());
-
-        if self.cancelled.load(Ordering::Relaxed) {
-            handle.abort();
-        } else {
-            *abort_handle = Some(handle);
-        }
-    }
-
-    fn abort(&self) {
-        self.cancelled.store(true, Ordering::Relaxed);
-
-        if let Some(handle) = self
-            .abort_handle
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            handle.abort();
-        }
-    }
-}
+/// Aborts the request task when the calling process dies.
+struct RequestCancellationResource(AbortHandle);
 
 impl rustler::Resource for RequestCancellationResource {
     const IMPLEMENTS_DOWN: bool = true;
 
     fn down<'a>(&'a self, _env: Env<'a>, _pid: LocalPid, _monitor: Monitor) {
-        self.abort();
+        self.0.abort();
     }
 }
 
@@ -257,65 +217,62 @@ fn nif_perform_request<'a>(
     pool: Option<ResourceArc<ClientResource>>,
 ) -> Term<'a> {
     let caller = env.pid();
-    let token_env = OwnedEnv::new();
+    let mut token_env = OwnedEnv::new();
     let saved_token = token_env.save(token);
     // Save the body term rather than copying its bytes here: for a refcounted
     // binary `save` (enif_make_copy) only bumps the reference count, so the
     // scheduler thread does O(1) work regardless of body size. The actual copy
     // into an owned Vec happens on the Tokio thread below.
     let saved_body = body.map(|b| token_env.save(b));
-    let cancellation = ResourceArc::new(RequestCancellationResource::new());
+    let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let cancellation = ResourceArc::new(RequestCancellationResource(abort_handle));
     let monitor = env.monitor(&cancellation, &caller);
 
-    RUNTIME.spawn(async move {
-        let body_vec = saved_body.map(|saved| {
-            token_env.run(|env| {
-                saved
-                    .load(env)
-                    .decode::<Binary>()
-                    .expect("request body was saved as a binary")
-                    .as_slice()
-                    .to_vec()
-            })
-        });
-
-        let request_handle = tokio::spawn(async move {
-            execute_request_async(request, body_vec, cookie_jar, pool).await
-        });
-
-        cancellation.set_abort_handle(request_handle.abort_handle());
-
-        let result = request_handle.await.unwrap_or_else(|join_error| {
-            let message = if join_error.is_panic() {
-                "request task panicked"
-            } else {
-                "request task was cancelled"
-            };
-
-            Err(NativeError::new("nif_panic", message, json!({})))
+    // Every path replies except an abort, which only a dead caller triggers.
+    // The panic is caught here, so the caller waits without a timeout.
+    let task = async move {
+        // A `&mut` borrow keeps the future Send: OwnedEnv is Send, not Sync.
+        let body_env = &mut token_env;
+        let result = AssertUnwindSafe(async move {
+            let body = saved_body.map(|saved| {
+                body_env.run(|env| {
+                    saved
+                        .load(env)
+                        .decode::<Binary>()
+                        .expect("request body was saved as a binary")
+                        .as_slice()
+                        .to_vec()
+                })
+            });
+            execute_request_async(request, body, cookie_jar, pool).await
+        })
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|_| {
+            Err(NativeError::new(
+                "nif_panic",
+                "request task panicked",
+                json!({}),
+            ))
         });
 
         if let Some(monitor) = monitor {
             token_env.demonitor(&cancellation, &monitor);
         }
 
-        send_request_result(caller, token_env, saved_token, result);
-    });
+        let _ = token_env.send_and_clear(&caller, |env| {
+            let token = saved_token.load(env);
+            (
+                cloaked_req_response(),
+                token,
+                encode_request_result(env, result),
+            )
+        });
+    };
+
+    RUNTIME.spawn(Abortable::new(task, abort_registration));
 
     ok().encode(env)
-}
-
-fn send_request_result(
-    caller: LocalPid,
-    mut token_env: OwnedEnv,
-    saved_token: SavedTerm,
-    result: Result<(NativeResponseMeta, Vec<u8>), NativeError>,
-) {
-    let _ = token_env.send_and_clear(&caller, |env| {
-        let token = saved_token.load(env);
-        let result_term = encode_request_result(env, result);
-        (cloaked_req_response(), token, result_term)
-    });
 }
 
 fn encode_request_result<'a>(

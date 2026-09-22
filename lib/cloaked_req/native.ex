@@ -41,14 +41,8 @@ defmodule CloakedReq.Native do
   @spec new_pool(map()) :: {:ok, reference()} | {:error, Error.t()}
   def new_pool(config) when is_map(config) do
     case nif_new_pool(config) do
-      {:ok, ref} when is_reference(ref) ->
-        {:ok, ref}
-
-      {:error, native_error} when is_map(native_error) ->
-        native_error_to_result(native_error)
-
-      other ->
-        unexpected_native_response(other)
+      {:ok, ref} -> {:ok, ref}
+      {:error, native_error} -> {:error, to_error(native_error)}
     end
   end
 
@@ -64,22 +58,16 @@ defmodule CloakedReq.Native do
   """
   @spec perform_request(map(), binary() | nil, reference() | nil, reference() | nil) ::
           {:ok, map(), binary()} | {:error, Error.t()}
-  def perform_request(payload, body, cookie_jar_ref \\ nil, pool_ref \\ nil)
-
-  def perform_request(payload, body, cookie_jar_ref, pool_ref) when is_map(payload) do
+  def perform_request(payload, body, cookie_jar_ref, pool_ref) do
     token = make_ref()
 
     case safe_nif_perform_request(payload, body, token, cookie_jar_ref, pool_ref) do
       :ok ->
         await_native_response(token, backstop_timeout(payload))
 
-      other ->
-        normalize_native_result(other)
+      {:error, _error} = error ->
+        error
     end
-  end
-
-  def perform_request(_payload, _body, _cookie_jar_ref, _pool_ref) do
-    {:error, Error.new(:invalid_request, "native payload must be a map")}
   end
 
   # Waits for the native task's token-tagged reply, with a timeout backstop.
@@ -94,7 +82,8 @@ defmodule CloakedReq.Native do
   @spec await_native_response(reference(), timeout()) :: {:ok, map(), binary()} | {:error, Error.t()}
   def await_native_response(token, timeout_ms) do
     receive do
-      {:cloaked_req_response, ^token, result} -> normalize_native_result(result)
+      {:cloaked_req_response, ^token, {:ok, _meta, _body} = result} -> result
+      {:cloaked_req_response, ^token, {:error, native_error}} -> {:error, to_error(native_error)}
     after
       timeout_ms ->
         flush_native_response(token)
@@ -121,54 +110,21 @@ defmodule CloakedReq.Native do
     end
   end
 
-  @spec normalize_native_result(term()) :: {:ok, map(), binary()} | {:error, Error.t()}
-  defp normalize_native_result(result) do
-    case result do
-      {:ok, meta, response_body} when is_map(meta) and is_binary(response_body) ->
-        {:ok, meta, response_body}
-
-      {:error, native_error} when is_map(native_error) ->
-        native_error_to_result(native_error)
-
-      other ->
-        unexpected_native_response(other)
-    end
-  end
-
-  # Maps the native error map (`%{"type" => ..., "message" => ..., "details" =>
-  # ...}`) into a `{:error, %CloakedReq.Error{}}`, falling back to a structured
-  # error when the shape is unexpected.
-  @spec native_error_to_result(map()) :: {:error, Error.t()}
-  defp native_error_to_result(%{"type" => type, "message" => message, "details" => details})
-       when is_binary(type) and is_binary(message) do
-    error_type = to_error_type(type)
-    {:error, Error.new(error_type, message, details)}
-  end
-
-  defp native_error_to_result(native_error) do
-    unexpected_native_response(native_error)
-  end
-
-  @spec unexpected_native_response(term()) :: {:error, Error.t()}
-  defp unexpected_native_response(response) do
-    {:error, Error.new(:native_error, "unexpected native response", %{response: inspect(response)})}
-  end
-
   defp safe_nif_perform_request(payload, body, token, cookie_jar_ref, pool_ref) do
     nif_perform_request(payload, body, token, cookie_jar_ref, pool_ref)
   rescue
-    error in [ErlangError] ->
-      {:error, %{"type" => "nif_panic", "message" => Exception.message(error), "details" => %{}}}
+    error in [ErlangError] -> {:error, Error.new(:nif_panic, Exception.message(error))}
   end
 
-  @spec to_error_type(String.t()) :: atom()
-  defp to_error_type("nif_panic"), do: :nif_panic
-  defp to_error_type("decode_request"), do: :decode_request
+  @spec to_error(map()) :: Error.t()
+  defp to_error(%{"type" => type, "message" => message, "details" => details}) do
+    type |> to_error_type() |> Error.new(message, details)
+  end
+
+  @spec to_error_type(String.t()) :: Error.type()
   defp to_error_type("invalid_request"), do: :invalid_request
   defp to_error_type("transport_error"), do: :transport_error
-  defp to_error_type("runtime_error"), do: :runtime_error
-  defp to_error_type("invalid_native_response"), do: :invalid_native_response
-  defp to_error_type(_), do: :native_error
+  defp to_error_type("nif_panic"), do: :nif_panic
 
   defp nif_create_cookie_jar, do: :erlang.nif_error(:nif_not_loaded)
   defp nif_new_pool(_config), do: :erlang.nif_error(:nif_not_loaded)

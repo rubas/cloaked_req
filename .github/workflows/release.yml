@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - mix.exs
   workflow_dispatch:
     inputs:
       tag:
@@ -79,10 +81,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag_exists=$TAG_EXISTS" >> "$GITHUB_OUTPUT"
 
-      - name: Skip when version did not change
-        if: steps.resolve.outputs.should_release != 'true'
-        run: echo "mix.exs version unchanged; release skipped"
-
   build:
     needs: detect
     if: needs.detect.outputs.should_release == 'true'
@@ -99,15 +97,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
-            lib_prefix: lib
             lib_ext: so
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
-            lib_prefix: lib
             lib_ext: so
           - target: aarch64-apple-darwin
             runner: macos-14
-            lib_prefix: lib
             lib_ext: dylib
 
     steps:
@@ -167,14 +162,13 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
-          LIB_PREFIX: ${{ matrix.lib_prefix }}
           LIB_EXT: ${{ matrix.lib_ext }}
           VERSION: ${{ needs.detect.outputs.version }}
         run: |
           SRC_DIR="native/cloaked_req_native/target/${TARGET}/release"
-          SRC_NAME="${LIB_PREFIX}cloaked_req_native.${LIB_EXT}"
+          SRC_NAME="libcloaked_req_native.${LIB_EXT}"
           # rustler_precompiled requests the .so suffix on every platform (incl. macOS), so publish as .so
-          LIB_NAME="${LIB_PREFIX}cloaked_req_native-v${VERSION}-nif-${NIF_VERSION}-${TARGET}.so"
+          LIB_NAME="libcloaked_req_native-v${VERSION}-nif-${NIF_VERSION}-${TARGET}.so"
 
           # Rename to versioned name expected by rustler_precompiled
           cp "${SRC_DIR}/${SRC_NAME}" "${SRC_DIR}/${LIB_NAME}"
@@ -226,11 +220,6 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}-release
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          persist-credentials: false
-
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: nif-*

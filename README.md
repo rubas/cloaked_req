@@ -9,7 +9,7 @@ Docs: <https://hexdocs.pm/cloaked_req>
 ```elixir
 def deps do
   [
-    {:cloaked_req, "~> 0.6.0"}
+    {:cloaked_req, "~> 0.7.0"}
   ]
 end
 ```

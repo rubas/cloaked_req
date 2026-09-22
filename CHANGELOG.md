@@ -4,17 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
-## Unreleased
+## [0.7.0] - 22.09.2026
 
 ### Fixed
 
+- Req never retried a transport failure. The adapter returned `%CloakedReq.AdapterError{}` for every failure, and Req's `retry` step only retries `%Req.TransportError{}`. A timeout, a refused connection, or a closed connection now returns `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or `:closed`, so the default `retry: :safe_transient` retries it. Change a match on `%CloakedReq.AdapterError{error: %{type: :transport_error}}` for these cases to `%Req.TransportError{}`. Every other failure still returns `%CloakedReq.AdapterError{}`.
+- A timeout or a closed connection while the response body streams in also returns `%Req.TransportError{}` now, the same as before the headers arrive.
+- A request with an explicit `cookie` header and a cookie jar sent two `Cookie` headers. The explicit header now wins and the jar is skipped for that request, the rule wreq applies on its own cookie path.
 - `:receive_timeout` was a total deadline for the whole request, so a download that took longer than 15 s failed with `:timeout` while data still arrived, and Req retried it. It now restarts after each body chunk. The README states the full rule.
 - The jar did not send its cookies to a URL that `http::Uri` rejects but wreq accepts, such as a path with a raw space. The jar now uses wreq's own cookie path, which works on the URI that wreq sends.
 - A cookie with a `Domain` equal to the request host was dropped when the host is itself a public suffix, such as `localhost` or a single-label intranet host. It is now kept as a host-only cookie, as RFC 6265 section 5.3 requires.
 - Response header values with bytes that are not UTF-8, such as a Latin-1 file name, reached Elixir with U+FFFD in place of those bytes. They now arrive as the raw bytes, the same as with Finch.
 - A `set-cookie` header with two `Domain` attributes passed the public suffix check on the first one, but the jar stored the last one. So `Domain=example.com; Domain=com` from `www.example.com` set a cookie that the jar sent to every `.com` host. The check now reads the cookie the same way the jar does.
 - An invalid request header name or value returned `transport_error: request execution failed`. It now returns `invalid_request: invalid request`.
-- The x86_64 Linux NIF of 0.7.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. Ubuntu 22.04 ships glibc 2.35, so a release check holds the floor: it fails when a NIF needs a glibc newer than 2.34.
+- The x86_64 Linux NIF of 0.6.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. Ubuntu 22.04 ships glibc 2.35, so a release check holds the floor: it fails when a NIF needs a glibc newer than 2.34.
 - A manual release dispatch built `main` but published the files under the given tag. It now builds the tag, and it fails when the tag does not exist.
 - HexDocs "View source" links point to the release tag, not to `main`.
 - `:local_address` accepted strings such as `"127.1"` that the NIF then rejected. The adapter now sends the canonical form, for example `"127.0.0.1"`. An address with an IPv6 scope such as `"fe80::1%eth0"` is still rejected, because the bind would drop the scope.
@@ -23,6 +26,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Update Mint to 1.10.1 in the lock file. Mint 1.9.3 has three advisories in its HTTP/1 chunked response parser (CVE-2026-82672, CVE-2026-82728, CVE-2026-82729). Mint comes from Req, so update it in your own lock file too.
+- The Rust tests run once per CI run, in their own job. The fingerprint smoke test reaches thumbprint.me and now runs only with `task test:rust:external`.
+- The NIF no longer repeats the RFC 6265 domain match before a cookie reaches the jar. wreq's jar applies the same rule. The public-suffix check stays in the NIF, because the jar has none.
+- `release.yml` no longer writes and pushes `checksum-Elixir.CloakedReq.Native.exs`.
+  `main` is protected. It needs signed commits and a pull request, thus the push
+  always failed. The workflow now stops after the GitHub release. `RELEASE.md`
+  gives the manual step, the same as the other NIF repositories.
 - Over HTTP/2, the jar now sends one `cookie` field per cookie, not one joined field. RFC 9113 section 8.2.3 allows this, and wreq does it on its own cookie path. HTTP/1.1 requests still carry one `Cookie` header.
 - The adapter no longer stops waiting for the native reply after `receive_timeout + connect_timeout + 5 s`. The native task now replies on every path, a panic included, so this backstop is gone. A `:nif_panic` error now carries the panic message in `details["reason"]`.
 - `%CloakedReq.Pool{}` no longer has a `:connect_timeout` field. The pool's client still uses the `:connect_timeout` option.
@@ -41,24 +51,6 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Tests only. The `local_address` test binds `127.0.0.2`, so it fails when the option is lost. The public-suffix cookie test goes through a proxy, so it reaches the check. The pool test checks the pool's user-agent on the wire. The redirect cookie test checks the redirect target.
 - New test: a malformed response returns `%CloakedReq.AdapterError{}` and Req does not retry it.
 - Duplicate tests, the unused `TestServer` host option, and a dead check in `bench/adapter_perf.exs` are removed.
-
-## [0.7.0] - 22.09.2026
-
-### Fixed
-
-- Req never retried a transport failure. The adapter returned `%CloakedReq.AdapterError{}` for every failure, and Req's `retry` step only retries `%Req.TransportError{}`. A timeout, a refused connection, or a closed connection now returns `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or `:closed`, so the default `retry: :safe_transient` retries it. Change a match on `%CloakedReq.AdapterError{error: %{type: :transport_error}}` for these cases to `%Req.TransportError{}`. Every other failure still returns `%CloakedReq.AdapterError{}`.
-- A timeout or a closed connection while the response body streams in also returns `%Req.TransportError{}` now, the same as before the headers arrive.
-- A request with an explicit `cookie` header and a cookie jar sent two `Cookie` headers. The explicit header now wins and the jar is skipped for that request, the rule wreq applies on its own cookie path.
-
-### Changed
-
-- Update Mint to 1.10.1 in the lock file. Mint 1.9.3 has three advisories in its HTTP/1 chunked response parser (CVE-2026-82672, CVE-2026-82728, CVE-2026-82729). Mint comes from Req, so update it in your own lock file too.
-- The Rust tests run once per CI run, in their own job. The fingerprint smoke test reaches thumbprint.me and now runs only with `task test:rust:external`.
-- The NIF no longer repeats the RFC 6265 domain match before a cookie reaches the jar. wreq's jar applies the same rule. The public-suffix check stays in the NIF, because the jar has none.
-- `release.yml` no longer writes and pushes `checksum-Elixir.CloakedReq.Native.exs`.
-  `main` is protected. It needs signed commits and a pull request, thus the push
-  always failed. The workflow now stops after the GitHub release. `RELEASE.md`
-  gives the manual step, the same as the other NIF repositories.
 
 ## [0.6.0] - 28.08.2026
 

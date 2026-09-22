@@ -141,6 +141,7 @@ jobs:
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
+          CARGO_PROFILE_RELEASE_STRIP: "true"
         run: cargo build --release --target "$TARGET"
 
       - name: Check glibc floor

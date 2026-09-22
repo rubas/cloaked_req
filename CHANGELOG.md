@@ -19,6 +19,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - CI now runs `cargo fmt --check`, clippy, `mix deps.audit`, and sobelow, and it compiles with `--warnings-as-errors`, the same as `task check`.
 - README lists the precompiled targets and the steps to build the NIF from source.
 - `RELEASE.md` uses git commands and a checksum step that always refreshes the new version.
+- Tests only. The `local_address` test binds `127.0.0.2`, so it fails when the option is lost. The public-suffix cookie test goes through a proxy, so it reaches the check. The pool test checks the pool's user-agent on the wire. The redirect cookie test checks the redirect target.
+- New test: a malformed response returns `%CloakedReq.AdapterError{}` and Req does not retry it.
+- Duplicate tests, the unused `TestServer` host option, and a dead check in `bench/adapter_perf.exs` are removed.
 
 ## [0.7.0] - 22.09.2026
 

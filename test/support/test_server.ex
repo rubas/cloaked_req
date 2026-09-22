@@ -5,7 +5,6 @@ defmodule CloakedReq.TestServer do
   def start(opts) when is_list(opts) do
     response = Keyword.fetch!(opts, :response)
     delay_ms = Keyword.get(opts, :delay_ms, 0)
-    host = Keyword.get(opts, :host, "127.0.0.1")
     caller = self()
 
     {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, reuseaddr: true])
@@ -26,7 +25,7 @@ defmodule CloakedReq.TestServer do
         :gen_tcp.close(listen)
       end)
 
-    {"http://#{host}:#{port}/", pid}
+    {"http://127.0.0.1:#{port}/", pid}
   end
 
   @spec get_request(pid(), timeout()) :: binary()
@@ -49,8 +48,6 @@ defmodule CloakedReq.TestServer do
 
   @spec build_response(pos_integer(), [{String.t(), String.t()}], binary()) :: iodata()
   def build_response(status, headers, body) when is_integer(status) and is_list(headers) and is_binary(body) do
-    reason = status_reason(status)
-
     all_headers = [
       {"content-length", body |> byte_size() |> Integer.to_string()},
       {"connection", "close"}
@@ -60,7 +57,7 @@ defmodule CloakedReq.TestServer do
     header_lines =
       Enum.map_join(all_headers, "\r\n", fn {name, value} -> "#{name}: #{value}" end)
 
-    ["HTTP/1.1 ", Integer.to_string(status), " ", reason, "\r\n", header_lines, "\r\n\r\n", body]
+    ["HTTP/1.1 ", Integer.to_string(status), " \r\n", header_lines, "\r\n\r\n", body]
   end
 
   # --- Private helpers ---
@@ -68,20 +65,14 @@ defmodule CloakedReq.TestServer do
   defp read_request(socket) do
     raw = read_until_headers_complete(socket, <<>>)
 
-    case :binary.split(raw, "\r\n\r\n") do
-      [headers_part, partial_body] ->
-        content_length = parse_content_length(headers_part)
-        remaining = content_length - byte_size(partial_body)
+    [headers_part, partial_body] = :binary.split(raw, "\r\n\r\n")
+    remaining = parse_content_length(headers_part) - byte_size(partial_body)
 
-        if remaining > 0 do
-          {:ok, rest} = :gen_tcp.recv(socket, remaining, 5_000)
-          <<raw::binary, rest::binary>>
-        else
-          raw
-        end
-
-      [_headers_only] ->
-        raw
+    if remaining > 0 do
+      {:ok, rest} = :gen_tcp.recv(socket, remaining, 5_000)
+      <<raw::binary, rest::binary>>
+    else
+      raw
     end
   end
 
@@ -111,12 +102,4 @@ defmodule CloakedReq.TestServer do
       end
     end)
   end
-
-  defp status_reason(200), do: "OK"
-  defp status_reason(201), do: "Created"
-  defp status_reason(302), do: "Found"
-  defp status_reason(303), do: "See Other"
-  defp status_reason(404), do: "Not Found"
-  defp status_reason(500), do: "Internal Server Error"
-  defp status_reason(_), do: "Unknown"
 end

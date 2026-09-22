@@ -56,9 +56,8 @@ defmodule CloakedReq.Native do
   `new_pool/1`.
   Returns `{:ok, response_meta, body}` or `{:error, %CloakedReq.Error{}}`.
 
-  The wait has no timeout of its own: the native task replies on every path,
-  a panic included, and `:receive_timeout_ms` bounds each wait for the server
-  there.
+  The wait has no timeout of its own, because the native task replies on every
+  path, a panic included.
   """
   @spec perform_request(map(), binary() | nil, reference() | nil, reference() | nil) ::
           {:ok, map(), binary()} | {:error, Error.t()}

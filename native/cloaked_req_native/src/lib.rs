@@ -382,8 +382,7 @@ async fn execute_request_async(
         )
     })?;
 
-    // The read timeout starts with the request: until the headers arrive it
-    // bounds connect, TLS and the wait as one window, then each body read.
+    // Req's :receive_timeout. README.md states what it bounds.
     let mut builder = client
         .request(method, request.url.as_str())
         .read_timeout(Duration::from_millis(request.receive_timeout_ms));

@@ -47,7 +47,7 @@ request =
 
 `:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit.
 
-Req's `:receive_timeout` (default 15s) starts with the request. It bounds the wait for the response headers, and that wait includes DNS, connect, and TLS. After the headers, it bounds each wait for the next body chunk, as with Req's Finch adapter. A body that keeps arriving has no total limit.
+Req's `:receive_timeout` (default 15s) starts with the request. Until the response headers arrive, it is one window that does not reset: DNS, connect, TLS, and the upload of the request body all count against it, so a large upload on a slow link needs a larger value. After the headers, it bounds each wait for the next body chunk, so a body that keeps arriving has no total limit.
 
 ### Req connect options
 

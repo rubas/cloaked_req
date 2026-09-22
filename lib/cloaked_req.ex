@@ -26,11 +26,7 @@ defmodule CloakedReq do
   - `:connect_options` - Req transport options for `:timeout`, `:proxy`, and `:proxy_headers`.
     `:timeout` (default: 30 s) bounds opening a connection: DNS, TCP, the proxy
     tunnel, and TLS.
-  - `:receive_timeout` - Req option (default: 15 s). It starts with the request
-    and bounds the wait for the response headers, the connect included, so the
-    lower of the two timeouts limits the connect. After the headers it bounds
-    each wait for the next body chunk. A body that keeps arriving has no total
-    limit.
+  - `:receive_timeout` - Req option (default: 15 s). The README states what it bounds.
   - `:impersonate` - profile atom (e.g. `:chrome_136`, `:"safari_17.4.1"`)
   - `:insecure_skip_verify` - boolean
   - `:local_address` - outbound source IP as string, IPv4 tuple, or IPv6 tuple

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## Unreleased
+
+### Fixed
+
+- The x86_64 Linux NIF of 0.7.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. The release fails when a NIF needs a newer glibc.
+- A manual release dispatch built `main` but published the files under the given tag. It now builds the tag, and it fails when the tag does not exist.
+- HexDocs "View source" links point to the release tag, not to `main`.
+
+### Changed
+
+- The release NIFs are stripped. The x86_64 download is about 9% smaller.
+- The aarch64 Linux NIF builds natively on an arm runner instead of with a cross toolchain.
+- CI now runs `cargo fmt --check`, clippy, `mix deps.audit`, and sobelow, and it compiles with `--warnings-as-errors`, the same as `task check`.
+- README lists the precompiled targets and the steps to build the NIF from source.
+- `RELEASE.md` uses git commands and a checksum step that always refreshes the new version.
+
 ## [0.7.0] - 22.09.2026
 
 ### Fixed

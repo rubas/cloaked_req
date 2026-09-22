@@ -48,8 +48,10 @@ the same checks.
 - A new build target needs the same entry in the `targets:` list of `lib/cloaked_req/native.ex` and
   in the build matrix of `.github/workflows/release.yml`. One without the other publishes a release
   that cannot load on that platform.
-- The Linux NIFs build on Ubuntu 22.04, so they load on glibc 2.34 and newer, as README promises.
-  A newer runner links newer glibc symbols, and the release check fails.
+- README promises glibc 2.34 for the Linux NIFs. The glibc check in `.github/workflows/release.yml`
+  holds that floor, not the runner image: Ubuntu 22.04 ships glibc 2.35. The check fails the release
+  when a NIF requires a glibc version newer than 2.34 or `GLIBC_ABI_DT_RELR`. A newer runner links
+  newer glibc versions and fails the check.
 - Bumping `wreq-util` changes the set of impersonation profiles. Regenerate the profile list in
   README.md from the crate's `Profile` enum.
 - `native/cloaked_req_native/Cargo.toml` keeps its own version. Move it with `@version`.

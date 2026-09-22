@@ -150,9 +150,10 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: |
-          # README promises glibc 2.34 (RHEL 9, Amazon Linux 2023). Fail on any newer symbol version.
-          SYMBOLS="$(objdump -T "native/cloaked_req_native/target/${TARGET}/release/libcloaked_req_native.so")"
-          if grep -E 'GLIBC_2\.(3[5-9]|[4-9][0-9])' <<< "$SYMBOLS"; then
+          # README promises glibc 2.34 (RHEL 9, Amazon Linux 2023). This check holds that floor, not
+          # the runner image: Ubuntu 22.04 ships glibc 2.35. Fail on any newer version the NIF requires.
+          VERSIONS="$(objdump -p "native/cloaked_req_native/target/${TARGET}/release/libcloaked_req_native.so")"
+          if grep -E 'GLIBC_2\.(3[5-9]|[4-9][0-9])|GLIBC_ABI_DT_RELR' <<< "$VERSIONS"; then
             echo "The NIF needs a glibc newer than 2.34" >&2
             exit 1
           fi

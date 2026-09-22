@@ -22,6 +22,8 @@ The package downloads a precompiled NIF for these targets:
 - `aarch64-unknown-linux-gnu`, glibc 2.34 or newer
 - `x86_64-unknown-linux-gnu`, glibc 2.34 or newer
 
+The release checks each Linux NIF and fails when it needs a glibc newer than 2.34.
+
 On any other platform, for example Intel macOS or Alpine (musl), build the NIF from source:
 
 1. Add `{:rustler, "~> 0.38.0"}` to your deps.

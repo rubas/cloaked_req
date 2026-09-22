@@ -8,7 +8,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
-- The x86_64 Linux NIF of 0.7.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. The release fails when a NIF needs a newer glibc.
+- The x86_64 Linux NIF of 0.7.0 needs glibc 2.38, so it does not load on Debian 12, Ubuntu 22.04, or RHEL 9. Both Linux NIFs now build on Ubuntu 22.04 and need glibc 2.34 or newer. Ubuntu 22.04 ships glibc 2.35, so a release check holds the floor: it fails when a NIF needs a glibc newer than 2.34.
 - A manual release dispatch built `main` but published the files under the given tag. It now builds the tag, and it fails when the tag does not exist.
 - HexDocs "View source" links point to the release tag, not to `main`.
 

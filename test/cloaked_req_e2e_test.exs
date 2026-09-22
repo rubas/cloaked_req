@@ -134,14 +134,40 @@ defmodule CloakedReq.E2ETest do
     assert error.error.message == "response body exceeds max_body_size"
   end
 
-  test "server delay past receive_timeout returns transport error" do
+  test "server delay past receive_timeout returns Req.TransportError :timeout" do
     response = TestServer.build_response(200, [{"content-type", "text/plain"}], "late")
     {url, _server} = TestServer.start(response: response, delay_ms: 500)
 
     req = [url: url, receive_timeout: 100, retry: false] |> Req.new() |> CloakedReq.attach()
 
-    assert {:error, %AdapterError{} = error} = Req.request(req)
-    assert error.error.type == :transport_error
+    assert {:error, %Req.TransportError{reason: :timeout}} = Req.request(req)
+  end
+
+  test "a refused connection returns Req.TransportError :econnrefused and Req retries it" do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, reuseaddr: true])
+    {:ok, port} = :inet.port(listen)
+    :ok = :gen_tcp.close(listen)
+    test_pid = self()
+
+    req =
+      [url: "http://127.0.0.1:#{port}/", max_retries: 2, retry_delay: 0, retry_log_level: false]
+      |> Req.new()
+      |> CloakedReq.attach()
+      |> Req.Request.append_request_steps(count_attempt: &tap(&1, fn _ -> send(test_pid, :attempt) end))
+
+    assert {:error, %Req.TransportError{reason: :econnrefused}} = Req.request(req)
+    assert_received :attempt
+    assert_received :attempt
+    assert_received :attempt
+    refute_received :attempt
+  end
+
+  test "a server that closes without a response returns Req.TransportError :closed" do
+    {url, _server} = TestServer.start(response: "")
+
+    req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach()
+
+    assert {:error, %Req.TransportError{reason: :closed}} = Req.request(req)
   end
 
   test "Req connect_options proxy and proxy_headers are used" do

@@ -1,7 +1,7 @@
 defmodule CloakedReq.CookieJarTest do
   @moduledoc """
-  Verifies cookie jar lifecycle, persistence, isolation, and PSL-based domain validation
-  through the full Elixir -> NIF -> Rust wreq pipeline.
+  Verifies cookie jar lifecycle, persistence, isolation, header precedence, and domain
+  validation through the full Elixir -> NIF -> Rust wreq pipeline.
   """
 
   use ExUnit.Case, async: true
@@ -124,9 +124,48 @@ defmodule CloakedReq.CookieJarTest do
     refute raw =~ "sid=xyz"
   end
 
+  test "an explicit cookie header wins over the jar and goes on the wire once" do
+    jar = CookieJar.new()
+
+    set_response = TestServer.build_response(200, [{"set-cookie", "session=abc123; Path=/"}], "ok")
+    {set_url, _set_server} = TestServer.start(response: set_response)
+    req = [url: set_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, %Req.Response{status: 200}} = Req.request(req)
+
+    verify_response = TestServer.build_response(200, [], "ok")
+    {verify_url, verify_server} = TestServer.start(response: verify_response)
+
+    req =
+      [url: verify_url, retry: false, headers: [cookie: "explicit=1"]]
+      |> Req.new()
+      |> CloakedReq.attach(cookie_jar: jar)
+
+    assert {:ok, %Req.Response{status: 200}} = Req.request(req)
+
+    raw = TestServer.get_request(verify_server)
+    assert Regex.scan(~r/^cookie: (.*)\r$/im, raw) == [["cookie: explicit=1\r", "explicit=1"]]
+  end
+
   # -------------------------------------------------------------------
-  # PSL rejection
+  # Domain rejection
   # -------------------------------------------------------------------
+
+  test "cookie with a Domain that does not match the host is not stored" do
+    jar = CookieJar.new()
+
+    set_response = TestServer.build_response(200, [{"set-cookie", "x=1; Domain=example.com; Path=/"}], "ok")
+    {set_url, _set_server} = TestServer.start(response: set_response)
+    req = [url: set_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, _} = Req.request(req)
+
+    verify_response = TestServer.build_response(200, [], "ok")
+    {verify_url, verify_server} = TestServer.start(response: verify_response)
+    req = [url: verify_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, _} = Req.request(req)
+
+    raw = TestServer.get_request(verify_server)
+    refute raw =~ "x=1"
+  end
 
   test "cookie with Domain=com is rejected by PSL validation" do
     jar = CookieJar.new()

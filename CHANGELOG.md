@@ -6,8 +6,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## Unreleased
 
+### Fixed
+
+- Req never retried a transport failure. The adapter returned `%CloakedReq.AdapterError{}` for every failure, and Req's `retry` step only retries `%Req.TransportError{}`. A timeout, a refused connection, or a closed connection now returns `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or `:closed`, so the default `retry: :safe_transient` retries it. Change a match on `%CloakedReq.AdapterError{error: %{type: :transport_error}}` for these cases to `%Req.TransportError{}`. Every other failure still returns `%CloakedReq.AdapterError{}`.
+- A request with an explicit `cookie` header and a cookie jar sent two `Cookie` headers. The explicit header now wins and the jar is skipped for that request, the rule wreq applies on its own cookie path.
+
 ### Changed
 
+- The NIF no longer repeats the RFC 6265 domain match before a cookie reaches the jar. wreq's jar applies the same rule. The public-suffix check stays in the NIF, because the jar has none.
 - `release.yml` no longer writes and pushes `checksum-Elixir.CloakedReq.Native.exs`.
   `main` is protected. It needs signed commits and a pull request, thus the push
   always failed. The workflow now stops after the GitHub release. `RELEASE.md`

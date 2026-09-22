@@ -77,6 +77,11 @@ defmodule CloakedReq do
 
   @doc """
   Runs the request through the native transport. Req calls this as the adapter.
+
+  A timeout, a refused connection, or a closed connection returns
+  `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or
+  `:closed`, so Req's `:retry` step treats it like a Finch failure. Every other
+  failure returns `%CloakedReq.AdapterError{}` and is not retried.
   """
   @spec run(Req.Request.t()) :: {Req.Request.t(), Req.Response.t() | Exception.t()}
   def run(%Req.Request{} = request) do
@@ -94,10 +99,18 @@ defmodule CloakedReq do
          {:ok, req_response} <- Response.from_native(response_meta, response_body) do
       {request, req_response}
     else
+      {:error, %Error{type: :transport_error, details: %{"kind" => kind}}} ->
+        {request, %Req.TransportError{reason: transport_reason(kind)}}
+
       {:error, %Error{} = error} ->
         {request, AdapterError.exception(error)}
     end
   end
+
+  @spec transport_reason(String.t()) :: :timeout | :econnrefused | :closed
+  defp transport_reason("timeout"), do: :timeout
+  defp transport_reason("econnrefused"), do: :econnrefused
+  defp transport_reason("closed"), do: :closed
 
   @spec validate_cookie_jar(nil | CookieJar.t()) :: :ok | {:error, Error.t()}
   defp validate_cookie_jar(nil), do: :ok

@@ -28,6 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
+          components: clippy, rustfmt
 
       - name: Cache Rust
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -35,6 +36,12 @@ jobs:
           path: native/cloaked_req_native/target
           key: rust-test-${{ hashFiles('native/cloaked_req_native/Cargo.lock') }}
           restore-keys: rust-test-
+
+      - name: Rust formatting
+        run: cargo fmt --check --manifest-path native/cloaked_req_native/Cargo.toml
+
+      - name: Clippy
+        run: cargo clippy --manifest-path native/cloaked_req_native/Cargo.toml --all-targets -- -D warnings
 
       - name: Rust tests
         run: cargo test --manifest-path native/cloaked_req_native/Cargo.toml

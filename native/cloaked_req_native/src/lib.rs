@@ -358,9 +358,11 @@ async fn execute_request_async(
         )
     })?;
 
+    // The read timeout starts with the request: until the headers arrive it
+    // bounds connect, TLS and the wait as one window, then each body read.
     let mut builder = client
         .request(method, request.url.as_str())
-        .timeout(Duration::from_millis(request.receive_timeout_ms));
+        .read_timeout(Duration::from_millis(request.receive_timeout_ms));
 
     // Proxy and source IP are per-request: wreq's connection pool keys on both,
     // so the shared client never reuses a connection across proxies or source
@@ -807,6 +809,33 @@ mod tests {
         server.join().expect("server thread must join");
         assert_eq!(error.message, "failed to read response body");
         assert_eq!(error.details["kind"], "timeout", "{:?}", error.details);
+    }
+
+    #[test]
+    fn body_that_outlasts_receive_timeout_succeeds_while_chunks_keep_arriving() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener must bind");
+        let addr = listener.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server must accept");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\n");
+            for _ in 0..8 {
+                thread::sleep(StdDuration::from_millis(60));
+                let _ = stream.write_all(b"x");
+                let _ = stream.flush();
+            }
+        });
+
+        let mut request = base_request();
+        request.url = format!("http://{addr}/");
+        request.receive_timeout_ms = 200;
+
+        let (meta, body) =
+            execute_request(request, None, None, None).expect("request should succeed");
+        server.join().expect("server thread must join");
+        assert_eq!(meta.status, 200);
+        assert_eq!(body, b"xxxxxxxx");
     }
 
     #[test]

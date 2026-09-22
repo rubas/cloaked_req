@@ -45,13 +45,15 @@ request =
 | `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max request and response body size             |
 | `:pool`                 | `Pool.t()`                  | `nil`   | Dedicated, isolated client and connection pool |
 
-`:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit. Req's `:receive_timeout` (default 15s) is also respected.
+`:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit.
+
+Req's `:receive_timeout` (default 15s) starts with the request. It bounds the wait for the response headers, and that wait includes DNS, connect, and TLS. After the headers, it bounds each wait for the next body chunk, as with Req's Finch adapter. A body that keeps arriving has no total limit.
 
 ### Req connect options
 
 `CloakedReq` respects these Req `:connect_options`:
 
-- `:timeout` - socket connect timeout in milliseconds, default 30s
+- `:timeout` - connect timeout in milliseconds for DNS, TCP, the proxy tunnel, and TLS, default 30s. `:receive_timeout` also runs during the connect, so the lower of the two applies.
 - `:proxy` - `{:http | :https, host, port, []}` proxy tuple
 - `:proxy_headers` - proxy headers, commonly used for proxy authentication
 

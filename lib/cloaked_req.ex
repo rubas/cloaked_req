@@ -23,7 +23,14 @@ defmodule CloakedReq do
   Supported adapter-relevant options:
 
   - `:cookie_jar` - `%CloakedReq.CookieJar{}` for automatic cookie persistence
-  - `:connect_options` - Req transport options for `:timeout`, `:proxy`, and `:proxy_headers`
+  - `:connect_options` - Req transport options for `:timeout`, `:proxy`, and `:proxy_headers`.
+    `:timeout` (default: 30 s) bounds opening a connection: DNS, TCP, the proxy
+    tunnel, and TLS.
+  - `:receive_timeout` - Req option (default: 15 s). It starts with the request
+    and bounds the wait for the response headers, the connect included, so the
+    lower of the two timeouts limits the connect. After the headers it bounds
+    each wait for the next body chunk. A body that keeps arriving has no total
+    limit.
   - `:impersonate` - profile atom (e.g. `:chrome_136`, `:"safari_17.4.1"`)
   - `:insecure_skip_verify` - boolean
   - `:local_address` - outbound source IP as string, IPv4 tuple, or IPv6 tuple
@@ -93,7 +100,6 @@ defmodule CloakedReq do
          jar_ref = if(jar, do: jar.ref),
          pool_ref = if(pool, do: pool.ref),
          {:ok, {payload, body}} <- Request.to_native_payload(request),
-         payload = apply_pool_connect_timeout(payload, pool),
          {:ok, response_meta, response_body} <-
            Native.perform_request(payload, body, jar_ref, pool_ref),
          {:ok, req_response} <- Response.from_native(response_meta, response_body) do
@@ -126,16 +132,6 @@ defmodule CloakedReq do
 
   defp validate_pool(_value) do
     {:error, Error.new(:invalid_request, "pool must be a %CloakedReq.Pool{}")}
-  end
-
-  # A pooled client carries its own connect timeout, so the per-request value in
-  # the payload no longer bounds the native connect. Replace it with the pool's
-  # so the BEAM-side response backstop matches the real native deadline.
-  @spec apply_pool_connect_timeout(map(), nil | Pool.t()) :: map()
-  defp apply_pool_connect_timeout(payload, nil), do: payload
-
-  defp apply_pool_connect_timeout(payload, %Pool{connect_timeout: connect_timeout}) do
-    %{payload | connect_timeout_ms: connect_timeout}
   end
 
   @spec register_options(Req.Request.t()) :: Req.Request.t()

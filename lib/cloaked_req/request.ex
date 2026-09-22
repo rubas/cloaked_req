@@ -180,12 +180,10 @@ defmodule CloakedReq.Request do
 
   defp normalize_proxy({scheme, host, port, []}, headers)
        when scheme in [:http, :https] and is_binary(host) and is_integer(port) and port > 0 do
+    host = if String.contains?(host, ":") and not String.starts_with?(host, "["), do: "[#{host}]", else: host
+
     with {:ok, proxy_headers} <- normalize_proxy_headers(headers) do
-      {:ok,
-       %{
-         url: URI.to_string(%URI{scheme: Atom.to_string(scheme), host: host, port: port}),
-         headers: proxy_headers
-       }}
+      {:ok, %{url: "#{scheme}://#{host}:#{port}", headers: proxy_headers}}
     end
   end
 
@@ -228,10 +226,13 @@ defmodule CloakedReq.Request do
 
   defp normalize_local_address(addr) when is_tuple(addr), do: ntoa_to_string(addr)
 
+  # :inet.parse_address/1 accepts an IPv6 scope such as "%eth0" and drops it, so reject it here.
   defp normalize_local_address(value) when is_binary(value) do
-    case value |> String.to_charlist() |> :inet.parse_address() do
-      {:ok, addr} -> ntoa_to_string(addr)
-      {:error, _} -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}
+    with false <- String.contains?(value, "%"),
+         {:ok, addr} <- value |> String.to_charlist() |> :inet.parse_address() do
+      ntoa_to_string(addr)
+    else
+      _ -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}
     end
   end
 

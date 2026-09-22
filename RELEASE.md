@@ -28,14 +28,14 @@ description: |
 - Update [CHANGELOG.md](CHANGELOG.md) in the same PR.
 - Set `version` in [native/cloaked_req_native/Cargo.toml](native/cloaked_req_native/Cargo.toml) to the new `@version`.
 - Keep [README.md](README.md) current: the install snippet's `~> X.Y` constraint must cover `@version`, and when `wreq-util` is bumped, refresh the version reference and the impersonation-profile list against the new `Profile` enum.
-- No version change means no tag and no GitHub release.
+- A version that already has a tag gets no new tag and no GitHub release.
 
 ## Automated GitHub Release
 
 After the version-bump PR is merged to `main`:
 
-1. `.github/workflows/release.yml` compares the current `mix.exs` version with `HEAD^`.
-2. If the version changed, the workflow ensures `vX.Y.Z` exists.
+1. `.github/workflows/release.yml` reads the `mix.exs` version and looks for the tag `vX.Y.Z`.
+2. If the tag does not exist, the workflow creates it. If the tag exists, the workflow stops.
 3. The same workflow builds the precompiled NIF archives and publishes the GitHub release for `vX.Y.Z`.
 4. The workflow stops there. It does not touch `checksum-Elixir.CloakedReq.Native.exs`.
 

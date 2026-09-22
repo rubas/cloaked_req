@@ -8,7 +8,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
-- Req never retried a transport failure. The adapter returned `%CloakedReq.AdapterError{}` for every failure, and Req's `retry` step only retries `%Req.TransportError{}`. A transport failure now returns `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or `:closed`, so the default `retry: :safe_transient` retries it. Any other transport reason carries the `%CloakedReq.Error{}` as the `reason`. Change a match on `%CloakedReq.AdapterError{error: %{type: :transport_error}}` to `%Req.TransportError{}`. Adapter-side failures such as an invalid option still return `%CloakedReq.AdapterError{}`.
+- Req never retried a transport failure. The adapter returned `%CloakedReq.AdapterError{}` for every failure, and Req's `retry` step only retries `%Req.TransportError{}`. A timeout, a refused connection, or a closed connection now returns `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or `:closed`, so the default `retry: :safe_transient` retries it. Change a match on `%CloakedReq.AdapterError{error: %{type: :transport_error}}` for these cases to `%Req.TransportError{}`. Every other failure still returns `%CloakedReq.AdapterError{}`.
 - A request with an explicit `cookie` header and a cookie jar sent two `Cookie` headers. The explicit header now wins and the jar is skipped for that request, the rule wreq applies on its own cookie path.
 
 ### Changed

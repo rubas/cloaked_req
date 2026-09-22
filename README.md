@@ -77,7 +77,7 @@ Req.new(url: "https://example.com")
 
 ### Errors and retries
 
-A transport failure returns `%Req.TransportError{}`, the struct Req's own Finch adapter uses. Req's default `retry: :safe_transient` therefore retries a `:timeout`, `:econnrefused`, or `:closed` failure with the usual backoff. Any other transport failure carries the `%CloakedReq.Error{}` as its `reason` and is not retried. An adapter-side failure, such as an invalid option or a body over `:max_body_size`, returns `%CloakedReq.AdapterError{}`.
+A timeout, a refused connection, or a closed connection returns `%Req.TransportError{}` with the reason `:timeout`, `:econnrefused`, or `:closed`, the same struct Req's own Finch adapter uses. Req's default `retry: :safe_transient` therefore retries it with the usual backoff. Every other failure, such as a TLS or DNS error, an invalid option, or a body over `:max_body_size`, returns `%CloakedReq.AdapterError{}` and is not retried.
 
 ### Cookie jar
 

@@ -12,13 +12,8 @@ defmodule CloakedReq.AdapterError do
           error: Error.t()
         }
 
-  @spec exception(Error.t() | String.t()) :: t()
+  @spec exception(Error.t()) :: t()
   def exception(%Error{} = error) do
     %__MODULE__{message: Error.format(error), error: error}
-  end
-
-  def exception(message) when is_binary(message) do
-    error = Error.new(:native_error, message)
-    %__MODULE__{message: message, error: error}
   end
 end

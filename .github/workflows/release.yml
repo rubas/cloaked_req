@@ -94,11 +94,11 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-22.04
             lib_prefix: lib
             lib_ext: so
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
+            runner: ubuntu-22.04-arm
             lib_prefix: lib
             lib_ext: so
           - target: aarch64-apple-darwin
@@ -124,15 +124,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake perl libclang-dev
 
-      - name: Install aarch64-linux-gnu cross toolchain
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get install -y crossbuild-essential-arm64
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> "$GITHUB_ENV"
-          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
-
       # --- Build ---
 
       - name: Cargo cache
@@ -151,6 +142,19 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: cargo build --release --target "$TARGET"
+
+      - name: Check glibc floor
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          # README promises glibc 2.34 (RHEL 9, Amazon Linux 2023). Fail on any newer symbol version.
+          SYMBOLS="$(objdump -T "native/cloaked_req_native/target/${TARGET}/release/libcloaked_req_native.so")"
+          if grep -E 'GLIBC_2\.(3[5-9]|[4-9][0-9])' <<< "$SYMBOLS"; then
+            echo "The NIF needs a glibc newer than 2.34" >&2
+            exit 1
+          fi
 
       # --- Package ---
 

@@ -8,8 +8,9 @@ impersonation. Shipped on Hex with precompiled NIFs, so most users never build t
 
 ## Gates
 
-`task check` is the full gate: `task test` (format check, `credo --strict`, dialyzer, ExUnit,
-`cargo test`) plus `task security` (`mix deps.audit`, sobelow).
+`task check` is the full gate: `task test` (`mix format` and `cargo fmt` checks, `credo --strict`,
+clippy, dialyzer, ExUnit, `cargo test`) plus `task security` (`mix deps.audit`, sobelow). CI runs
+the same checks.
 
 - Tests tagged `:external` reach live third-party endpoints and are excluded by default. CI never
   runs them. Run `task test:external` yourself before a release.
@@ -47,6 +48,8 @@ impersonation. Shipped on Hex with precompiled NIFs, so most users never build t
 - A new build target needs the same entry in the `targets:` list of `lib/cloaked_req/native.ex` and
   in the build matrix of `.github/workflows/release.yml`. One without the other publishes a release
   that cannot load on that platform.
+- The Linux NIFs build on Ubuntu 22.04, so they load on glibc 2.34 and newer, as README promises.
+  A newer runner links newer glibc symbols, and the release check fails.
 - Bumping `wreq-util` changes the set of impersonation profiles. Regenerate the profile list in
   README.md from the crate's `Profile` enum.
 - `native/cloaked_req_native/Cargo.toml` keeps its own version. Move it with `@version`.

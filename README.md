@@ -14,6 +14,20 @@ def deps do
 end
 ```
 
+### Precompiled NIFs
+
+The package downloads a precompiled NIF for these targets:
+
+- `aarch64-apple-darwin`
+- `aarch64-unknown-linux-gnu`, glibc 2.34 or newer
+- `x86_64-unknown-linux-gnu`, glibc 2.34 or newer
+
+On any other platform, for example Intel macOS or Alpine (musl), build the NIF from source:
+
+1. Add `{:rustler, "~> 0.38.0"}` to your deps.
+2. Install Rust 1.98 or newer, cmake, libclang, and git.
+3. Set `CLOAKED_REQ_BUILD=1` when you compile.
+
 ## Usage
 
 Use as a Req adapter:

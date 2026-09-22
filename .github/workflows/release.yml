@@ -44,6 +44,10 @@ jobs:
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             TAG="$INPUT_TAG"
+            if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "Tag $TAG does not exist" >&2
+              exit 1
+            fi
             VERSION="${TAG#v}"
             SHOULD_RELEASE=true
           else
@@ -109,6 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && needs.detect.outputs.tag || github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
@@ -243,7 +248,6 @@ jobs:
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 # zizmor: ignore[superfluous-actions] action handles release asset upload and notes generation beyond a plain gh release call
         with:
           tag_name: ${{ needs.detect.outputs.tag }}
-          target_commitish: main
           files: |
             artifacts/*.tar.gz
             artifacts/SHA256SUMS

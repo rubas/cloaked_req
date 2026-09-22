@@ -88,6 +88,17 @@ defmodule CloakedReq.E2ETest do
     assert "cloaked" in resp.headers["x-powered-by"]
   end
 
+  test "a Latin-1 response header value arrives as the raw bytes" do
+    disposition = <<"attachment; filename=\"M", 0xE4, "rz.pdf\"">>
+    response = TestServer.build_response(200, [{"content-disposition", disposition}], "ok")
+    {url, _server} = TestServer.start(response: response)
+
+    req = [url: url, retry: false] |> Req.new() |> CloakedReq.attach()
+
+    assert {:ok, %Req.Response{} = resp} = Req.request(req)
+    assert resp.headers["content-disposition"] == [disposition]
+  end
+
   test "404 status is propagated with body" do
     response = TestServer.build_response(404, [{"content-type", "text/plain"}], "not found")
     {url, _server} = TestServer.start(response: response)

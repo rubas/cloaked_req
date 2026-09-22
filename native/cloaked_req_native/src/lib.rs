@@ -12,7 +12,7 @@ use futures_util::future::{AbortHandle, Abortable};
 use futures_util::{FutureExt, StreamExt};
 use lru::LruCache;
 use request::{NativePoolConfig, NativeProxyConfig, NativeRequest};
-use response::NativeResponseMeta;
+use response::{NativeResponseMeta, RawHeaderValue};
 use rustler::types::binary::{Binary, NewBinary};
 use rustler::{Encoder, Env, LocalPid, Monitor, OwnedEnv, ResourceArc, Term};
 use serde_json::{Value, json};
@@ -422,12 +422,7 @@ async fn execute_request_async(
     let headers = response
         .headers()
         .iter()
-        .map(|(name, value)| {
-            (
-                name.to_string(),
-                String::from_utf8_lossy(value.as_bytes()).into_owned(),
-            )
-        })
+        .map(|(name, value)| (name.as_str().to_owned(), RawHeaderValue(value.clone())))
         .collect::<Vec<_>>();
 
     let body_bytes = read_body_with_limit(response, request.max_body_size_bytes).await?;
@@ -655,8 +650,7 @@ mod tests {
         assert!(
             meta.headers
                 .iter()
-                .any(|header| header.0.eq_ignore_ascii_case("content-type")
-                    && header.1.contains("text/plain"))
+                .any(|(name, value)| name == "content-type" && value.0 == "text/plain")
         );
 
         let raw_request = received_request
@@ -972,9 +966,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_non_utf8_header_values() {
-        // Header value contains raw bytes that are not valid UTF-8.
-        // wreq uses from_utf8_lossy, so we expect replacement characters.
+    fn keeps_non_utf8_header_value_bytes() {
         let mut raw_response = Vec::new();
         raw_response.extend_from_slice(b"HTTP/1.1 200 OK\r\nx-binary: ");
         raw_response.extend_from_slice(&[0xff, 0xfe]);
@@ -984,27 +976,16 @@ mod tests {
         let mut request = base_request();
         request.url = url;
 
-        let result = execute_request(request, None, None, None);
+        let (meta, _body) =
+            execute_request(request, None, None, None).expect("request should succeed");
         server.join().expect("server thread must join");
 
-        // wreq may reject invalid header bytes at the HTTP parsing level.
-        // Either a successful response with lossy-decoded headers or a transport error is acceptable.
-        match result {
-            Ok((meta, _body)) => {
-                assert_eq!(meta.status, 200);
-                let binary_header = meta
-                    .headers
-                    .iter()
-                    .find(|h| h.0 == "x-binary")
-                    .expect("x-binary header should exist");
-                // from_utf8_lossy replaces invalid bytes with U+FFFD
-                assert!(binary_header.1.contains('\u{FFFD}'));
-            }
-            Err(err) => {
-                // Acceptable: wreq rejects non-UTF8 headers at parse level
-                assert_eq!(err.type_name, "transport_error");
-            }
-        }
+        let (_, value) = meta
+            .headers
+            .iter()
+            .find(|(name, _)| name == "x-binary")
+            .expect("x-binary header should exist");
+        assert_eq!(value.0.as_bytes(), [0xff, 0xfe]);
     }
 
     // --- local_address tests ---

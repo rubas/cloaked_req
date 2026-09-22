@@ -129,10 +129,17 @@ end
 
 {total, concurrency, delay_ms} =
   case System.argv() do
-    [] -> {300, 100, 50}
-    [total] -> {String.to_integer(total), 100, 50}
-    [total, concurrency] -> {String.to_integer(total), String.to_integer(concurrency), 50}
-    [total, concurrency, delay_ms | _] -> {String.to_integer(total), String.to_integer(concurrency), String.to_integer(delay_ms)}
+    [] ->
+      {300, 100, 50}
+
+    [total] ->
+      {String.to_integer(total), 100, 50}
+
+    [total, concurrency] ->
+      {String.to_integer(total), String.to_integer(concurrency), 50}
+
+    [total, concurrency, delay_ms | _] ->
+      {String.to_integer(total), String.to_integer(concurrency), String.to_integer(delay_ms)}
   end
 
 {port, server_pid} = Bench.ConcurrentServer.start(delay_ms)
@@ -146,7 +153,10 @@ IO.puts("  delay:       #{delay_ms} ms")
 IO.puts("")
 
 plain_req = fn -> Req.get!(url, retry: false) end
-cloaked_req = fn -> [url: url, retry: false] |> Req.new() |> CloakedReq.attach(impersonate: :chrome_136) |> Req.request!() end
+
+cloaked_req = fn ->
+  [url: url, retry: false] |> Req.new() |> CloakedReq.attach(impersonate: :chrome_136) |> Req.request!()
+end
 
 plain_req.()
 cloaked_req.()

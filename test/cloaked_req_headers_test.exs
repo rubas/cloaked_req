@@ -29,14 +29,6 @@ defmodule CloakedReqHeadersTest do
     {"priority", "u=0, i"}
   ]
 
-  test "impersonated request sends the profile user-agent, not Req's default" do
-    raw = capture_request(&CloakedReq.impersonate(&1, :chrome_136))
-
-    assert header(raw, "user-agent") =~ "Chrome/136.0.0.0"
-    assert header(raw, "user-agent") =~ "Mozilla/5.0"
-    refute raw =~ ~r/req\/\d+\.\d+\.\d+/
-  end
-
   test "attach/2 without a profile still drops Req's default user-agent" do
     raw = capture_request(&CloakedReq.attach/1)
 
@@ -55,24 +47,16 @@ defmodule CloakedReqHeadersTest do
     assert header(raw, "user-agent") == "my-crawler/2.0"
   end
 
-  test "impersonated request sends the profile accept-encoding, not wreq's default" do
-    raw = capture_request(&CloakedReq.impersonate(&1, :chrome_136))
-
-    assert header(raw, "accept-encoding") == "gzip, deflate, br, zstd"
-  end
-
   test "a compressed response still decodes with the profile accept-encoding" do
     body = String.duplicate("cloaked-req-", 500)
     headers = [{"content-type", "text/plain"}, {"content-encoding", "gzip"}]
     response = TestServer.build_response(200, headers, :zlib.gzip(body))
-    {url, server} = TestServer.start(response: response)
+    {url, _server} = TestServer.start(response: response)
 
     req = [url: url, retry: false] |> Req.new() |> CloakedReq.impersonate(:chrome_136)
 
     assert {:ok, %Req.Response{status: 200} = resp} = Req.request(req)
     assert resp.body == body
-
-    assert header(TestServer.get_request(server), "accept-encoding") == "gzip, deflate, br, zstd"
   end
 
   test "chrome_136 emits its full header set in order" do
@@ -108,7 +92,7 @@ defmodule CloakedReqHeadersTest do
     end)
   end
 
-  @spec header(binary(), String.t()) :: String.t() | nil
+  @spec header(binary(), String.t()) :: String.t()
   defp header(raw, name) do
     raw |> headers() |> List.keyfind(name, 0) |> then(fn {_name, value} -> value end)
   end

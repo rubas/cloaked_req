@@ -186,6 +186,23 @@ defmodule CloakedReq.CookieJarTest do
     refute raw =~ "evil=1"
   end
 
+  test "cookie with a Domain equal to a public-suffix host such as localhost is kept" do
+    jar = CookieJar.new()
+
+    set_response = TestServer.build_response(200, [{"set-cookie", "sid=1; Domain=localhost; Path=/"}], "ok")
+    {set_url, _set_server} = TestServer.start(response: set_response, host: "localhost")
+    req = [url: set_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, _} = Req.request(req)
+
+    verify_response = TestServer.build_response(200, [], "ok")
+    {verify_url, verify_server} = TestServer.start(response: verify_response, host: "localhost")
+    req = [url: verify_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
+    assert {:ok, _} = Req.request(req)
+
+    raw = TestServer.get_request(verify_server)
+    assert raw =~ ~r/^cookie: sid=1\r$/im
+  end
+
   # -------------------------------------------------------------------
   # Redirect with cookies
   # -------------------------------------------------------------------

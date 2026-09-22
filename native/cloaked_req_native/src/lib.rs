@@ -4,7 +4,7 @@ mod response;
 
 use std::num::NonZeroUsize;
 use std::panic::AssertUnwindSafe;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use error::NativeError;
@@ -16,9 +16,9 @@ use response::NativeResponseMeta;
 use rustler::types::binary::{Binary, NewBinary};
 use rustler::{Encoder, Env, LocalPid, Monitor, OwnedEnv, ResourceArc, Term};
 use serde_json::{Value, json};
-use wreq::cookie::{CookieStore, Cookies};
+use wreq::cookie::{CookieStore, Cookies, Jar};
 use wreq::header::{HeaderMap, HeaderName, HeaderValue};
-use wreq::{Client, Method, Proxy};
+use wreq::{Client, Method, Proxy, Uri, Version};
 use wreq_util::Profile;
 
 rustler::atoms! {
@@ -53,10 +53,26 @@ static CLIENT_CACHE: LazyLock<Mutex<LruCache<ClientKey, Client>>> = LazyLock::ne
 /// Wraps wreq's `Jar` (RFC 6265-compliant cookie store). The jar is
 /// automatically dropped when the Elixir term is garbage collected.
 struct CookieJarResource {
-    jar: wreq::cookie::Jar,
+    store: Arc<PublicSuffixGuard>,
 }
 
 impl rustler::Resource for CookieJarResource {}
+
+/// Adds the one check `Jar` lacks: a `set-cookie` header whose Domain
+/// attribute is a public suffix never reaches the jar.
+struct PublicSuffixGuard(Jar);
+
+impl CookieStore for PublicSuffixGuard {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
+        let mut safe =
+            cookie_headers.filter(|header| is_cookie_domain_safe(header.as_bytes(), uri.host()));
+        self.0.set_cookies(&mut safe, uri);
+    }
+
+    fn cookies(&self, uri: &Uri, version: Version) -> Cookies {
+        self.0.cookies(uri, version)
+    }
+}
 
 /// Opaque HTTP client resource held by the BEAM.
 ///
@@ -190,7 +206,7 @@ fn build_proxy(proxy_config: &NativeProxyConfig) -> Result<Proxy, NativeError> {
 #[rustler::nif]
 fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
     ResourceArc::new(CookieJarResource {
-        jar: wreq::cookie::Jar::default(),
+        store: Arc::new(PublicSuffixGuard(Jar::default())),
     })
 }
 
@@ -386,28 +402,10 @@ async fn execute_request_async(
         builder = builder.header(name.as_str(), value.as_str());
     }
 
-    // RFC 6265 allows one Cookie header per request. A caller-set header wins
-    // over the jar, the same rule wreq applies on its own cookie path.
-    let caller_sets_cookie = request
-        .headers
-        .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
-
-    if let Some(ref jar) = cookie_jar
-        && !caller_sets_cookie
-        && let Ok(parsed_uri) = request.url.parse::<http::Uri>()
-    {
-        match jar.jar.cookies(&parsed_uri, http::Version::HTTP_11) {
-            Cookies::Compressed(val) => {
-                builder = builder.header("cookie", val);
-            }
-            Cookies::Uncompressed(vals) => {
-                for val in vals {
-                    builder = builder.header("cookie", val);
-                }
-            }
-            _ => {}
-        }
+    // wreq skips the jar when the caller set a Cookie header, and stores each
+    // set-cookie against the URI it sent the request to.
+    if let Some(jar) = cookie_jar {
+        builder = builder.cookie_provider(jar.store.clone());
     }
 
     if let Some(body) = body {
@@ -418,22 +416,6 @@ async fn execute_request_async(
         .send()
         .await
         .map_err(|reason| transport_error("request execution failed", &reason))?;
-
-    // The jar applies the RFC 6265 domain match itself. Only the public-suffix
-    // rule has to run here, before the header reaches the jar.
-    if let Some(ref jar) = cookie_jar {
-        let response_uri = response.uri();
-        let set_cookies: Vec<_> = response
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter(|hv| is_cookie_domain_safe(hv.as_bytes()))
-            .collect();
-        if !set_cookies.is_empty() {
-            let mut iter = set_cookies.into_iter();
-            jar.jar.set_cookies(&mut iter, response_uri);
-        }
-    }
 
     let status = response.status().as_u16();
     let url = response.uri().to_string();
@@ -513,8 +495,10 @@ fn transport_error_kind(error: &wreq::Error) -> Option<&'static str> {
 
 /// Rejects a `set-cookie` header whose Domain attribute is a public suffix
 /// (e.g. "com", "co.uk", "github.io"). Host-only cookies (no Domain attribute)
-/// are always accepted. The jar rejects a Domain that does not match the host.
-fn is_cookie_domain_safe(header_bytes: &[u8]) -> bool {
+/// are always accepted, and so is a Domain equal to the request host, such as
+/// `localhost` (RFC 6265 section 5.3 step 5 keeps that cookie host-only). The
+/// jar rejects a Domain that does not match the host.
+fn is_cookie_domain_safe(header_bytes: &[u8], host: Option<&str>) -> bool {
     let header_str = match std::str::from_utf8(header_bytes) {
         Ok(s) => s,
         Err(_) => return false,
@@ -524,6 +508,7 @@ fn is_cookie_domain_safe(header_bytes: &[u8]) -> bool {
         Some(domain) => {
             let domain = domain.trim_start_matches('.').to_lowercase();
             psl::domain(domain.as_bytes()).is_some()
+                || host.is_some_and(|host| host.eq_ignore_ascii_case(&domain))
         }
         None => true,
     }
@@ -1105,20 +1090,38 @@ mod tests {
 
     #[test]
     fn psl_rejects_public_suffix_domain() {
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=com"));
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=CO.UK"));
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=.github.io"));
+        let host = Some("www.example.com");
+        assert!(!is_cookie_domain_safe(b"evil=1; Domain=com", host));
+        assert!(!is_cookie_domain_safe(b"evil=1; Domain=CO.UK", host));
+        assert!(!is_cookie_domain_safe(b"evil=1; Domain=.github.io", host));
     }
 
     #[test]
     fn psl_accepts_registrable_domain() {
-        assert!(is_cookie_domain_safe(b"x=1; Domain=example.com"));
-        assert!(is_cookie_domain_safe(b"x=1; Domain=.Example.co.uk"));
+        let host = Some("www.example.com");
+        assert!(is_cookie_domain_safe(b"x=1; Domain=example.com", host));
+        assert!(is_cookie_domain_safe(b"x=1; Domain=.Example.co.uk", host));
+    }
+
+    #[test]
+    fn psl_accepts_public_suffix_domain_equal_to_host() {
+        assert!(is_cookie_domain_safe(
+            b"sid=1; Domain=localhost",
+            Some("localhost")
+        ));
+        assert!(is_cookie_domain_safe(
+            b"sid=1; Domain=.Intranet",
+            Some("intranet")
+        ));
+        assert!(!is_cookie_domain_safe(
+            b"sid=1; Domain=localhost",
+            Some("intranet")
+        ));
     }
 
     #[test]
     fn psl_accepts_host_only_cookie() {
-        assert!(is_cookie_domain_safe(b"session=abc; Path=/"));
+        assert!(is_cookie_domain_safe(b"session=abc; Path=/", Some("com")));
     }
 
     #[test]
@@ -1136,7 +1139,7 @@ mod tests {
 
     #[test]
     fn psl_rejects_non_utf8_header() {
-        assert!(!is_cookie_domain_safe(&[0xff, 0xfe]));
+        assert!(!is_cookie_domain_safe(&[0xff, 0xfe], Some("example.com")));
     }
 
     #[test]
@@ -1148,7 +1151,7 @@ mod tests {
         header.extend_from_slice("ï".as_bytes());
         header.extend_from_slice(b"=1");
         assert!(std::str::from_utf8(&header).is_ok());
-        assert!(is_cookie_domain_safe(&header));
+        assert!(is_cookie_domain_safe(&header, Some("example.com")));
     }
 
     #[test]

@@ -171,49 +171,32 @@ defmodule CloakedReq.CookieJarTest do
   test "cookie with Domain=com is rejected by PSL validation" do
     jar = CookieJar.new()
 
-    # Both requests go through a TestServer proxy, so the request host is www.a.com.
-    # The jar's own domain match accepts Domain=com for that host; only the PSL check rejects it.
+    # The jar's own domain match accepts Domain=com for www.a.com; only the PSL check rejects it.
     set_response = TestServer.build_response(200, [{"set-cookie", "evil=1; Domain=com; Path=/"}], "ok")
-    {set_proxy, _set_server} = TestServer.start(response: set_response)
-    %URI{host: host, port: port} = URI.parse(set_proxy)
+    get_via_proxy("http://www.a.com/", set_response, jar)
 
-    req =
-      [url: "http://www.a.com/", retry: false, connect_options: [proxy: {:http, host, port, []}]]
-      |> Req.new()
-      |> CloakedReq.attach(cookie_jar: jar)
-
-    assert {:ok, _} = Req.request(req)
-
-    verify_response = TestServer.build_response(200, [], "ok")
-    {verify_proxy, verify_server} = TestServer.start(response: verify_response)
-    %URI{host: host, port: port} = URI.parse(verify_proxy)
-
-    req =
-      [url: "http://www.a.com/", retry: false, connect_options: [proxy: {:http, host, port, []}]]
-      |> Req.new()
-      |> CloakedReq.attach(cookie_jar: jar)
-
-    assert {:ok, _} = Req.request(req)
-
-    raw = TestServer.get_request(verify_server)
-    refute raw =~ "evil=1"
+    verify_server = get_via_proxy("http://www.a.com/", TestServer.build_response(200, [], "ok"), jar)
+    refute TestServer.get_request(verify_server) =~ "evil=1"
   end
 
   test "cookie with a Domain equal to a public-suffix host such as localhost is kept" do
     jar = CookieJar.new()
 
     set_response = TestServer.build_response(200, [{"set-cookie", "sid=1; Domain=localhost; Path=/"}], "ok")
-    {set_url, _set_server} = TestServer.start(response: set_response, host: "localhost")
-    req = [url: set_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
-    assert {:ok, _} = Req.request(req)
+    get_via_proxy("http://localhost/", set_response, jar)
 
-    verify_response = TestServer.build_response(200, [], "ok")
-    {verify_url, verify_server} = TestServer.start(response: verify_response, host: "localhost")
-    req = [url: verify_url, retry: false] |> Req.new() |> CloakedReq.attach(cookie_jar: jar)
-    assert {:ok, _} = Req.request(req)
+    verify_server = get_via_proxy("http://localhost/", TestServer.build_response(200, [], "ok"), jar)
+    assert TestServer.get_request(verify_server) =~ ~r/^cookie: sid=1\r$/im
+  end
 
-    raw = TestServer.get_request(verify_server)
-    assert raw =~ ~r/^cookie: sid=1\r$/im
+  test "cookie with a Domain equal to a public-suffix host is host-only and skips its subdomains" do
+    jar = CookieJar.new()
+
+    set_response = TestServer.build_response(200, [{"set-cookie", "sid=1; Domain=localhost; Path=/"}], "ok")
+    get_via_proxy("http://localhost/", set_response, jar)
+
+    verify_server = get_via_proxy("http://app.localhost/", TestServer.build_response(200, [], "ok"), jar)
+    refute TestServer.get_request(verify_server) =~ "sid=1"
   end
 
   # -------------------------------------------------------------------
@@ -239,5 +222,19 @@ defmodule CloakedReq.CookieJarTest do
     assert {:ok, %Req.Response{status: 200}} = Req.request(req)
 
     assert TestServer.get_request(dest_server) =~ "redirect_token=abc"
+  end
+
+  # The request goes through a TestServer proxy, so the jar sees the host of `url`.
+  defp get_via_proxy(url, response, jar) do
+    {proxy, server} = TestServer.start(response: response)
+    %URI{host: host, port: port} = URI.parse(proxy)
+
+    req =
+      [url: url, retry: false, connect_options: [proxy: {:http, host, port, []}]]
+      |> Req.new()
+      |> CloakedReq.attach(cookie_jar: jar)
+
+    assert {:ok, _} = Req.request(req)
+    server
   end
 end

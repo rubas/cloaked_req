@@ -209,6 +209,7 @@ name = "cloaked_req_native"
 version = "0.7.0"
 dependencies = [
  "bytes",
+ "cookie",
  "futures-util",
  "lru",
  "psl",

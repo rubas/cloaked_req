@@ -10,8 +10,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - `:receive_timeout` was a total deadline for the whole request, so a download that took longer than 15 s failed with `:timeout` while data still arrived, and Req retried it. It now works like Req's Finch adapter: it bounds the wait for the response headers and then each wait for the next body chunk. The wait for the headers starts with the request, so it also includes DNS, connect, and TLS. A body that keeps arriving has no total limit.
 - The jar did not send its cookies to a URL that `http::Uri` rejects but wreq accepts, such as a path with a raw space. The jar now uses wreq's own cookie path, which works on the URI that wreq sends.
-- A cookie with a `Domain` equal to the request host was dropped when the host is itself a public suffix, such as `localhost` or a single-label intranet host. It is now kept, as RFC 6265 section 5.3 requires.
+- A cookie with a `Domain` equal to the request host was dropped when the host is itself a public suffix, such as `localhost` or a single-label intranet host. It is now kept as a host-only cookie, as RFC 6265 section 5.3 requires.
 - Response header values with bytes that are not UTF-8, such as a Latin-1 file name, reached Elixir with U+FFFD in place of those bytes. They now arrive as the raw bytes, the same as with Finch.
+- A `set-cookie` header with two `Domain` attributes passed the public suffix check on the first one, but the jar stored the last one. So `Domain=example.com; Domain=com` from `www.example.com` set a cookie that the jar sent to every `.com` host. The check now reads the cookie the same way the jar does.
 - An invalid request header name or value returned `transport_error: request execution failed`. It now returns `invalid_request: invalid request`.
 
 ### Changed

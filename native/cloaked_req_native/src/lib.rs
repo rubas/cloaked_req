@@ -9,6 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
+use cookie::Cookie;
 use error::NativeError;
 use futures_util::future::{AbortHandle, Abortable};
 use futures_util::{FutureExt, StreamExt};
@@ -60,15 +61,16 @@ struct CookieJarResource {
 
 impl rustler::Resource for CookieJarResource {}
 
-/// Adds the one check `Jar` lacks: a `set-cookie` header whose Domain
-/// attribute is a public suffix never reaches the jar.
+/// Adds the one check `Jar` lacks, the public suffix check in `cookie_for_jar`.
 struct PublicSuffixGuard(Jar);
 
 impl CookieStore for PublicSuffixGuard {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, uri: &Uri) {
-        let mut safe =
-            cookie_headers.filter(|header| is_cookie_domain_safe(header.as_bytes(), uri.host()));
-        self.0.set_cookies(&mut safe, uri);
+        for header in cookie_headers {
+            if let Some(cookie) = cookie_for_jar(header.as_bytes(), uri.host()) {
+                self.0.add(cookie, uri);
+            }
+        }
     }
 
     fn cookies(&self, uri: &Uri, version: Version) -> Cookies {
@@ -503,45 +505,24 @@ fn transport_error_kind(error: &wreq::Error) -> Option<&'static str> {
     None
 }
 
-/// Rejects a `set-cookie` header whose Domain attribute is a public suffix
-/// (e.g. "com", "co.uk", "github.io"). Host-only cookies (no Domain attribute)
-/// are always accepted, and so is a Domain equal to the request host, such as
-/// `localhost` (RFC 6265 section 5.3 step 5 keeps that cookie host-only). The
-/// jar rejects a Domain that does not match the host.
-fn is_cookie_domain_safe(header_bytes: &[u8], host: Option<&str>) -> bool {
-    let header_str = match std::str::from_utf8(header_bytes) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
+/// Parses a `set-cookie` header with the parser the jar uses, so the check
+/// sees the Domain the jar stores. A Domain that is a public suffix (e.g.
+/// "com", "co.uk", "github.io") drops the cookie, unless it equals the request
+/// host, such as `localhost`: RFC 6265 section 5.3 step 5 then makes the
+/// cookie host-only. The jar rejects a Domain that does not match the host.
+fn cookie_for_jar<'a>(header: &'a [u8], host: Option<&str>) -> Option<Cookie<'a>> {
+    let mut cookie = Cookie::parse(std::str::from_utf8(header).ok()?).ok()?;
 
-    match extract_cookie_domain(header_str) {
-        Some(domain) => {
-            let domain = domain.trim_start_matches('.').to_lowercase();
-            psl::domain(domain.as_bytes()).is_some()
-                || host.is_some_and(|host| host.eq_ignore_ascii_case(&domain))
+    if let Some(domain) = cookie.domain().map(str::to_lowercase)
+        && psl::domain(domain.as_bytes()).is_none()
+    {
+        if !host.is_some_and(|host| host.eq_ignore_ascii_case(&domain)) {
+            return None;
         }
-        None => true,
+        cookie.unset_domain();
     }
-}
 
-/// Extracts the Domain attribute value from a set-cookie header string.
-///
-/// Splits on the first `=` so a multibyte UTF-8 character cannot land on a
-/// non-char boundary and panic. An empty `Domain=` is treated as absent, which
-/// keeps the cookie host-only, matching the previous behavior.
-fn extract_cookie_domain(header: &str) -> Option<&str> {
-    header
-        .split(';')
-        .skip(1) // skip name=value
-        .find_map(|attr| {
-            let (key, value) = attr.split_once('=')?;
-            if key.trim().eq_ignore_ascii_case("domain") {
-                let value = value.trim();
-                (!value.is_empty()).then_some(value)
-            } else {
-                None
-            }
-        })
+    Some(cookie)
 }
 
 fn on_load(env: Env, _info: Term) -> bool {
@@ -1075,81 +1056,42 @@ mod tests {
     #[test]
     fn psl_rejects_public_suffix_domain() {
         let host = Some("www.example.com");
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=com", host));
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=CO.UK", host));
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=.github.io", host));
+        assert!(cookie_for_jar(b"evil=1; Domain=com", host).is_none());
+        assert!(cookie_for_jar(b"evil=1; Domain=CO.UK", host).is_none());
+        assert!(cookie_for_jar(b"evil=1; Domain=.github.io", host).is_none());
+    }
+
+    #[test]
+    fn psl_checks_the_last_domain_attribute_the_jar_stores() {
+        let host = Some("www.example.com");
+        assert!(cookie_for_jar(b"evil=1; Domain=example.com; Domain=com", host).is_none());
     }
 
     #[test]
     fn psl_accepts_registrable_domain() {
         let host = Some("www.example.com");
-        assert!(is_cookie_domain_safe(b"x=1; Domain=example.com", host));
-        assert!(is_cookie_domain_safe(b"x=1; Domain=.Example.co.uk", host));
+        let cookie = cookie_for_jar(b"x=1; Domain=.Example.co.uk", host).expect("kept");
+        assert_eq!(cookie.domain(), Some("Example.co.uk"));
+        assert!(cookie_for_jar(b"x=1; Domain=example.com", host).is_some());
     }
 
     #[test]
-    fn psl_accepts_public_suffix_domain_equal_to_host() {
-        assert!(is_cookie_domain_safe(
-            b"sid=1; Domain=localhost",
-            Some("localhost")
-        ));
-        assert!(is_cookie_domain_safe(
-            b"sid=1; Domain=.Intranet",
-            Some("intranet")
-        ));
-        assert!(!is_cookie_domain_safe(
-            b"sid=1; Domain=localhost",
-            Some("intranet")
-        ));
+    fn psl_keeps_public_suffix_domain_equal_to_host_as_host_only() {
+        let cookie = cookie_for_jar(b"sid=1; Domain=localhost", Some("localhost")).expect("kept");
+        assert_eq!(cookie.domain(), None);
+        let cookie = cookie_for_jar(b"sid=1; Domain=.Intranet", Some("intranet")).expect("kept");
+        assert_eq!(cookie.domain(), None);
+        assert!(cookie_for_jar(b"sid=1; Domain=localhost", Some("intranet")).is_none());
     }
 
     #[test]
     fn psl_accepts_host_only_cookie() {
-        assert!(is_cookie_domain_safe(b"session=abc; Path=/", Some("com")));
-    }
-
-    #[test]
-    fn extract_cookie_domain_parses_correctly() {
-        assert_eq!(
-            extract_cookie_domain("session=abc; Domain=.example.com; Path=/"),
-            Some(".example.com")
-        );
-        assert_eq!(extract_cookie_domain("session=abc; Path=/"), None);
-        assert_eq!(
-            extract_cookie_domain("session=abc; path=/; domain=test.com; secure"),
-            Some("test.com")
-        );
+        assert!(cookie_for_jar(b"session=abc; Path=/", Some("com")).is_some());
     }
 
     #[test]
     fn psl_rejects_non_utf8_header() {
-        assert!(!is_cookie_domain_safe(&[0xff, 0xfe], Some("example.com")));
-    }
-
-    #[test]
-    fn cookie_domain_handles_multibyte_attribute_boundary() {
-        // Valid UTF-8 with a multibyte char (ï = 0xc3 0xaf) straddling byte
-        // index 7 of an attribute. Slicing at a fixed byte index would panic;
-        // boundary-safe parsing must treat this as a host-only cookie.
-        let mut header = b"session=x; abcdef".to_vec();
-        header.extend_from_slice("ï".as_bytes());
-        header.extend_from_slice(b"=1");
-        assert!(std::str::from_utf8(&header).is_ok());
-        assert!(is_cookie_domain_safe(&header, Some("example.com")));
-    }
-
-    #[test]
-    fn extract_cookie_domain_ignores_empty_domain() {
-        // An empty Domain= keeps the cookie host-only (no Domain extracted).
-        assert_eq!(extract_cookie_domain("session=abc; Domain=; Path=/"), None);
-    }
-
-    #[test]
-    fn extract_cookie_domain_handles_multibyte_non_domain_attribute() {
-        assert_eq!(
-            extract_cookie_domain("session=abc; nï=1; Domain=test.com"),
-            Some("test.com")
-        );
+        assert!(cookie_for_jar(&[0xff, 0xfe], Some("example.com")).is_none());
     }
 
     #[test]

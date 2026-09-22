@@ -83,7 +83,7 @@ A timeout, a refused connection, or a closed connection returns `%Req.TransportE
 
 ### Cookie jar
 
-Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain. A `Domain` equal to the request host, such as `localhost`, is kept. An explicit `cookie` header on a request wins over the jar, and the jar adds no cookies to that request. Over HTTP/2 the jar sends one `cookie` field per cookie.
+Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain. A `Domain` equal to a request host that is itself a public suffix, such as `localhost`, is kept as a host-only cookie. An explicit `cookie` header on a request wins over the jar, and the jar adds no cookies to that request. Over HTTP/2 the jar sends one `cookie` field per cookie.
 
 ```elixir
 jar = CloakedReq.CookieJar.new()

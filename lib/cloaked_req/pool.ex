@@ -119,7 +119,9 @@ defmodule CloakedReq.Pool do
   @spec validate_options(list()) :: {:ok, keyword()} | {:error, Error.t()}
   defp validate_options(options) do
     if Keyword.keyword?(options) do
-      case Keyword.validate(Keyword.new(options),
+      case options
+           |> Keyword.new()
+           |> Keyword.validate(
              impersonate: nil,
              insecure_skip_verify: false,
              connect_timeout: 30_000,

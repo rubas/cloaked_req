@@ -131,6 +131,15 @@ jobs:
       - name: Credo
         run: MIX_ENV=test mix credo --strict
 
+      # The audits do not depend on the OTP version, so one leg runs them.
+      - name: Audit Hex dependencies
+        if: matrix.elixir == '1.20.2'
+        run: MIX_ENV=test mix deps.audit
+
+      - name: Sobelow
+        if: matrix.elixir == '1.20.2'
+        run: MIX_ENV=test mix sobelow --config --exit
+
       - name: Dialyzer
         run: MIX_ENV=test mix dialyzer
 

@@ -19,7 +19,7 @@ defmodule CloakedReq.Pool do
   keeps up to 20 idle connections per host.
 
   The client is garbage-collected by the BEAM when the `Pool` struct is no
-  longer referenced, so its idle connections close on their own, so a worker that
+  longer referenced, so its idle connections close on their own. A worker that
   crashes without an explicit teardown cannot leak the pool. To rotate a pool's
   identity (for example after its upstream proxy exit changes), build a new pool
   and drop the old struct; the old client's connections close once it is
@@ -115,19 +115,24 @@ defmodule CloakedReq.Pool do
     end
   end
 
-  @spec validate_options(keyword()) :: {:ok, keyword()} | {:error, Error.t()}
+  # Keyword.new/1 keeps the last value of a duplicated key, like Req, so Keyword.validate/2 does not report it.
+  @spec validate_options(list()) :: {:ok, keyword()} | {:error, Error.t()}
   defp validate_options(options) do
-    case Keyword.validate(options,
-           impersonate: nil,
-           insecure_skip_verify: false,
-           connect_timeout: 30_000,
-           pool_idle_timeout: nil
-         ) do
-      {:ok, options} ->
-        {:ok, options}
+    if Keyword.keyword?(options) do
+      case Keyword.validate(Keyword.new(options),
+             impersonate: nil,
+             insecure_skip_verify: false,
+             connect_timeout: 30_000,
+             pool_idle_timeout: nil
+           ) do
+        {:ok, options} ->
+          {:ok, options}
 
-      {:error, keys} ->
-        {:error, Error.new(:invalid_request, "unknown pool options: " <> Enum.map_join(keys, ", ", &inspect/1))}
+        {:error, keys} ->
+          {:error, Error.new(:invalid_request, "unknown pool options: " <> Enum.map_join(keys, ", ", &inspect/1))}
+      end
+    else
+      {:error, Error.new(:invalid_request, "pool options must be a keyword list")}
     end
   end
 

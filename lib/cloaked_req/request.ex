@@ -250,22 +250,11 @@ defmodule CloakedReq.Request do
   @spec normalize_local_address(term()) :: {:ok, nil | String.t()} | {:error, Error.t()}
   defp normalize_local_address(nil), do: {:ok, nil}
 
-  defp normalize_local_address({a, b, c, d} = addr)
-       when is_integer(a) and is_integer(b) and is_integer(c) and is_integer(d) do
-    ntoa_to_string(addr)
-  end
-
-  defp normalize_local_address({a, b, c, d, e, f, g, h} = addr)
-       when is_integer(a) and is_integer(b) and is_integer(c) and is_integer(d) and is_integer(e) and is_integer(f) and
-              is_integer(g) and is_integer(h) do
-    ntoa_to_string(addr)
-  end
+  defp normalize_local_address(addr) when is_tuple(addr), do: ntoa_to_string(addr)
 
   defp normalize_local_address(value) when is_binary(value) do
-    charlist = String.to_charlist(value)
-
-    case :inet.parse_address(charlist) do
-      {:ok, _addr} -> {:ok, value}
+    case value |> String.to_charlist() |> :inet.parse_address() do
+      {:ok, addr} -> ntoa_to_string(addr)
       {:error, _} -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}
     end
   end
@@ -274,7 +263,7 @@ defmodule CloakedReq.Request do
     {:error, Error.new(:invalid_request, "local_address must be an IP address string or tuple")}
   end
 
-  @spec ntoa_to_string(:inet.ip_address()) :: {:ok, String.t()} | {:error, Error.t()}
+  @spec ntoa_to_string(tuple()) :: {:ok, String.t()} | {:error, Error.t()}
   defp ntoa_to_string(addr) do
     case :inet.ntoa(addr) do
       {:error, _} -> {:error, Error.new(:invalid_request, "local_address is not a valid IP address")}

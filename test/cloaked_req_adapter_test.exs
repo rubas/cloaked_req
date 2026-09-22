@@ -382,14 +382,14 @@ defmodule CloakedReq.AdapterTest do
     assert payload[:local_address] == "::1"
   end
 
-  test "local_address string is passed through" do
+  test "local_address string is sent in canonical form" do
     request =
       [url: "https://example.com"]
       |> Req.new()
-      |> CloakedReq.attach(local_address: "10.0.0.1")
+      |> CloakedReq.attach(local_address: "127.1")
 
     assert {:ok, {payload, _body}} = Request.to_native_payload(request)
-    assert payload[:local_address] == "10.0.0.1"
+    assert payload[:local_address] == "127.0.0.1"
   end
 
   test "nil local_address produces nil in payload" do

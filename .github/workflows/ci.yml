@@ -86,6 +86,7 @@ jobs:
           - otp: "29.0"
             elixir: "1.20.2"
             version-type: "strict"
+            audit: true
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,11 +134,11 @@ jobs:
 
       # The audits do not depend on the OTP version, so one leg runs them.
       - name: Audit Hex dependencies
-        if: matrix.elixir == '1.20.2'
+        if: matrix.audit
         run: MIX_ENV=test mix deps.audit
 
       - name: Sobelow
-        if: matrix.elixir == '1.20.2'
+        if: matrix.audit
         run: MIX_ENV=test mix sobelow --config --exit
 
       - name: Dialyzer

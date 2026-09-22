@@ -458,7 +458,15 @@ async fn execute_request_async(
         builder = builder.header(name.as_str(), value.as_str());
     }
 
+    // RFC 6265 allows one Cookie header per request. A caller-set header wins
+    // over the jar, the same rule wreq applies on its own cookie path.
+    let caller_sets_cookie = request
+        .headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("cookie"));
+
     if let Some(ref jar) = cookie_jar
+        && !caller_sets_cookie
         && let Ok(parsed_uri) = request.url.parse::<http::Uri>()
     {
         match jar.jar.cookies(&parsed_uri, http::Version::HTTP_11) {
@@ -479,23 +487,22 @@ async fn execute_request_async(
     }
 
     let response = builder.send().await.map_err(|reason| {
-        NativeError::new(
-            "transport_error",
-            "request execution failed",
-            json!({"reason": reason.to_string(), "debug": format!("{reason:?}")}),
-        )
+        let mut details = json!({"reason": reason.to_string(), "debug": format!("{reason:?}")});
+        if let Some(kind) = transport_error_kind(&reason) {
+            details["kind"] = json!(kind);
+        }
+        NativeError::new("transport_error", "request execution failed", details)
     })?;
 
-    // Store cookies against the actual response URI so redirects use the
-    // final host for PSL validation and jar scoping.
+    // The jar applies the RFC 6265 domain match itself. Only the public-suffix
+    // rule has to run here, before the header reaches the jar.
     if let Some(ref jar) = cookie_jar {
         let response_uri = response.uri();
-        let host = response_uri.host().unwrap_or_default();
         let set_cookies: Vec<_> = response
             .headers()
             .get_all("set-cookie")
             .iter()
-            .filter(|hv| is_cookie_domain_safe(hv.as_bytes(), host))
+            .filter(|hv| is_cookie_domain_safe(hv.as_bytes()))
             .collect();
         if !set_cookies.is_empty() {
             let mut iter = set_cookies.into_iter();
@@ -538,36 +545,55 @@ fn execute_request(
     RUNTIME.block_on(execute_request_async(request, body, cookie_jar, pool))
 }
 
-/// Validates that a `set-cookie` header's Domain attribute is safe to store.
-///
-/// Rejects cookies whose Domain is a public suffix (e.g. "com", "co.uk",
-/// "github.io") or doesn't match the request host at a label boundary.
-/// Host-only cookies (no Domain attribute) are always accepted.
-fn is_cookie_domain_safe(header_bytes: &[u8], request_host: &str) -> bool {
+/// Names the failure classes Req retries under `retry: :safe_transient`:
+/// `timeout`, `econnrefused` and `closed`, the reasons `Req.TransportError`
+/// carries for the Finch adapter. Anything else stays unclassified.
+fn transport_error_kind(error: &wreq::Error) -> Option<&'static str> {
+    use std::io::ErrorKind;
+
+    if error.is_timeout() {
+        return Some("timeout");
+    }
+
+    let mut source = std::error::Error::source(error);
+    while let Some(err) = source {
+        if let Some(proto) = err.downcast_ref::<wreq_proto::Error>()
+            && (proto.is_incomplete_message() || proto.is_closed())
+        {
+            return Some("closed");
+        }
+        if let Some(io) = err.downcast_ref::<std::io::Error>() {
+            match io.kind() {
+                ErrorKind::ConnectionRefused => return Some("econnrefused"),
+                ErrorKind::ConnectionReset
+                | ErrorKind::ConnectionAborted
+                | ErrorKind::BrokenPipe
+                | ErrorKind::UnexpectedEof => return Some("closed"),
+                _ => {}
+            }
+        }
+        source = err.source();
+    }
+
+    None
+}
+
+/// Rejects a `set-cookie` header whose Domain attribute is a public suffix
+/// (e.g. "com", "co.uk", "github.io"). Host-only cookies (no Domain attribute)
+/// are always accepted. The jar rejects a Domain that does not match the host.
+fn is_cookie_domain_safe(header_bytes: &[u8]) -> bool {
     let header_str = match std::str::from_utf8(header_bytes) {
         Ok(s) => s,
         Err(_) => return false,
     };
 
-    let domain = match extract_cookie_domain(header_str) {
-        Some(d) => d,
-        None => return true, // No Domain attr → host-only cookie, always safe
-    };
-
-    let effective_domain = domain.trim_start_matches('.').to_lowercase();
-
-    // Reject if the domain is a public suffix (no registrable domain above it)
-    if psl::domain(effective_domain.as_bytes()).is_none() {
-        return false;
+    match extract_cookie_domain(header_str) {
+        Some(domain) => {
+            let domain = domain.trim_start_matches('.').to_lowercase();
+            psl::domain(domain.as_bytes()).is_some()
+        }
+        None => true,
     }
-
-    // Verify origin: Domain must match request host at label boundary
-    let host = request_host.to_lowercase();
-
-    host == effective_domain
-        || (host.len() > effective_domain.len()
-            && host.ends_with(&effective_domain)
-            && host.as_bytes()[host.len() - effective_domain.len() - 1] == b'.')
 }
 
 /// Extracts the Domain attribute value from a set-cookie header string.
@@ -788,6 +814,40 @@ mod tests {
         let error = result.expect_err("expected error");
         assert_eq!(error.type_name, "transport_error");
         assert_eq!(error.message, "request execution failed");
+        assert_eq!(error.details["kind"], "timeout");
+    }
+
+    #[test]
+    fn returns_econnrefused_kind_when_nothing_listens() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener must bind");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+
+        let mut request = base_request();
+        request.url = format!("http://{addr}/");
+
+        let error = execute_request(request, None, None, None).expect_err("expected error");
+        assert_eq!(error.type_name, "transport_error");
+        assert_eq!(error.details["kind"], "econnrefused");
+    }
+
+    #[test]
+    fn returns_closed_kind_when_server_closes_before_responding() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener must bind");
+        let addr = listener.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("server must accept");
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+        });
+
+        let mut request = base_request();
+        request.url = format!("http://{addr}/");
+
+        let error = execute_request(request, None, None, None).expect_err("expected error");
+        server.join().expect("server thread must join");
+        assert_eq!(error.type_name, "transport_error");
+        assert_eq!(error.details["kind"], "closed", "{:?}", error.details);
     }
 
     #[test]
@@ -1079,45 +1139,20 @@ mod tests {
 
     #[test]
     fn psl_rejects_public_suffix_domain() {
-        assert!(!is_cookie_domain_safe(b"evil=1; Domain=com", "example.com"));
-        assert!(!is_cookie_domain_safe(
-            b"evil=1; Domain=co.uk",
-            "example.com"
-        ));
+        assert!(!is_cookie_domain_safe(b"evil=1; Domain=com"));
+        assert!(!is_cookie_domain_safe(b"evil=1; Domain=CO.UK"));
+        assert!(!is_cookie_domain_safe(b"evil=1; Domain=.github.io"));
     }
 
     #[test]
-    fn psl_rejects_cross_origin_domain() {
-        assert!(!is_cookie_domain_safe(b"x=1; Domain=other.com", "evil.com"));
-    }
-
-    #[test]
-    fn psl_accepts_valid_parent_domain() {
-        assert!(is_cookie_domain_safe(
-            b"x=1; Domain=example.com",
-            "sub.example.com"
-        ));
-    }
-
-    #[test]
-    fn psl_accepts_exact_host_domain() {
-        assert!(is_cookie_domain_safe(
-            b"x=1; Domain=example.com",
-            "example.com"
-        ));
+    fn psl_accepts_registrable_domain() {
+        assert!(is_cookie_domain_safe(b"x=1; Domain=example.com"));
+        assert!(is_cookie_domain_safe(b"x=1; Domain=.Example.co.uk"));
     }
 
     #[test]
     fn psl_accepts_host_only_cookie() {
-        assert!(is_cookie_domain_safe(b"session=abc; Path=/", "example.com"));
-    }
-
-    #[test]
-    fn psl_rejects_non_label_boundary_match() {
-        assert!(!is_cookie_domain_safe(
-            b"x=1; Domain=example.com",
-            "notexample.com"
-        ));
+        assert!(is_cookie_domain_safe(b"session=abc; Path=/"));
     }
 
     #[test]
@@ -1135,7 +1170,7 @@ mod tests {
 
     #[test]
     fn psl_rejects_non_utf8_header() {
-        assert!(!is_cookie_domain_safe(&[0xff, 0xfe], "example.com"));
+        assert!(!is_cookie_domain_safe(&[0xff, 0xfe]));
     }
 
     #[test]
@@ -1147,7 +1182,7 @@ mod tests {
         header.extend_from_slice("ï".as_bytes());
         header.extend_from_slice(b"=1");
         assert!(std::str::from_utf8(&header).is_ok());
-        assert!(is_cookie_domain_safe(&header, "example.com"));
+        assert!(is_cookie_domain_safe(&header));
     }
 
     #[test]

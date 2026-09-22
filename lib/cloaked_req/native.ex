@@ -101,7 +101,8 @@ defmodule CloakedReq.Native do
 
         {:error,
          Error.new(:transport_error, "native request produced no response within #{timeout_ms}ms", %{
-           timeout_ms: timeout_ms
+           "kind" => "timeout",
+           "timeout_ms" => timeout_ms
          })}
     end
   end

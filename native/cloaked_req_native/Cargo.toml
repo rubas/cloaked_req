@@ -18,6 +18,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time"] }
 wreq = { version = "0.16.1", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies", "stream"] }
+wreq-proto = "0.2"
 wreq-util = { version = "0.2.0", features = ["emulation-serde", "emulation-compression"] }
 
 [lints.rust]

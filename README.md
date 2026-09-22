@@ -75,9 +75,13 @@ Req.new(url: "https://example.com")
 |> CloakedReq.attach(local_address: {127, 0, 0, 1})
 ```
 
+### Errors and retries
+
+A transport failure returns `%Req.TransportError{}`, the struct Req's own Finch adapter uses. Req's default `retry: :safe_transient` therefore retries a `:timeout`, `:econnrefused`, or `:closed` failure with the usual backoff. Any other transport failure carries the `%CloakedReq.Error{}` as its `reason` and is not retried. An adapter-side failure, such as an invalid option or a body over `:max_body_size`, returns `%CloakedReq.AdapterError{}`.
+
 ### Cookie jar
 
-Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain.
+Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain. An explicit `cookie` header on a request wins over the jar, so the request carries one `Cookie` header.
 
 ```elixir
 jar = CloakedReq.CookieJar.new()

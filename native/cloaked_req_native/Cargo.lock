@@ -217,6 +217,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "wreq",
+ "wreq-proto",
  "wreq-util",
 ]
 

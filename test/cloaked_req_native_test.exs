@@ -31,7 +31,7 @@ defmodule CloakedReq.NativeTest do
   test "times out with a transport error when no reply arrives" do
     token = make_ref()
 
-    assert {:error, %Error{type: :transport_error, details: %{timeout_ms: 25}}} =
+    assert {:error, %Error{type: :transport_error, details: %{"kind" => "timeout", "timeout_ms" => 25}}} =
              Native.await_native_response(token, 25)
   end
 end

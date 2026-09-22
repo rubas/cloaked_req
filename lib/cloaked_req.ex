@@ -77,6 +77,12 @@ defmodule CloakedReq do
 
   @doc """
   Runs the request through the native transport. Req calls this as the adapter.
+
+  A transport failure returns `%Req.TransportError{}`, so Req's `:retry` step
+  treats it like a Finch failure: `:timeout`, `:econnrefused` and `:closed` are
+  retried under the default `:safe_transient`. Any other transport reason
+  carries the `%CloakedReq.Error{}` and is not retried. An adapter-side
+  failure, such as an invalid option, returns `%CloakedReq.AdapterError{}`.
   """
   @spec run(Req.Request.t()) :: {Req.Request.t(), Req.Response.t() | Exception.t()}
   def run(%Req.Request{} = request) do
@@ -94,10 +100,19 @@ defmodule CloakedReq do
          {:ok, req_response} <- Response.from_native(response_meta, response_body) do
       {request, req_response}
     else
+      {:error, %Error{type: :transport_error} = error} ->
+        {request, %Req.TransportError{reason: transport_reason(error)}}
+
       {:error, %Error{} = error} ->
         {request, AdapterError.exception(error)}
     end
   end
+
+  @spec transport_reason(Error.t()) :: :timeout | :econnrefused | :closed | Error.t()
+  defp transport_reason(%Error{details: %{"kind" => "timeout"}}), do: :timeout
+  defp transport_reason(%Error{details: %{"kind" => "econnrefused"}}), do: :econnrefused
+  defp transport_reason(%Error{details: %{"kind" => "closed"}}), do: :closed
+  defp transport_reason(%Error{} = error), do: error
 
   @spec validate_cookie_jar(nil | CookieJar.t()) :: :ok | {:error, Error.t()}
   defp validate_cookie_jar(nil), do: :ok

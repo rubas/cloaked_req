@@ -12,7 +12,6 @@
     "native/*/target",
     ".dprint-cache",
     ".elixir_ls",
-    ".jj",
     ".git",
     ".claude"
   ],

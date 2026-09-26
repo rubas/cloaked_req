@@ -8,10 +8,6 @@ impersonation. Shipped on Hex with precompiled NIFs, so most users never build t
 
 ## Gates
 
-`task check` is the full gate: `task test` (`mix format` and `cargo fmt` checks, `credo --strict`,
-clippy, dialyzer, ExUnit, `cargo test`) plus `task security` (`mix deps.audit`, sobelow). CI runs
-the same checks.
-
 - Tests tagged `:external` reach live third-party endpoints and are excluded by default. CI never
   runs them. Run `task test:external` yourself before a release.
 - `task test:zizmor` needs the `zizmor` binary on PATH. CI installs its own copy.
@@ -27,9 +23,6 @@ the same checks.
   timeout.
 - `checksum-Elixir.CloakedReq.Native.exs` is written by `.github/workflows/release.yml`. Never edit
   it by hand.
-- `test/support/test_server.ex` is the local HTTP server the unit tests hit.
-- `bench/*.exs` run as `CLOAKED_REQ_BUILD=1 mix run bench/adapter_perf.exs`.
-- [RELEASE.md](RELEASE.md) is the release and Hex publishing runbook.
 
 ## House decisions
 

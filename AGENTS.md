@@ -1,50 +1,41 @@
 # cloaked_req
 
-## Goal
+The README describes the adapter and its options. It ships on Hex with precompiled NIFs, so most users never build the
+crate.
 
-A `Req` adapter that sends every request through a Rust NIF around
-[`wreq`](https://docs.rs/wreq), so callers keep `Req` ergonomics and gain browser TLS and HTTP/2
-impersonation. Shipped on Hex with precompiled NIFs, so most users never build the crate.
+## Checks
 
-## Gates
-
-- Tests tagged `:external` reach live third-party endpoints and are excluded by default. CI never
-  runs them. Run `task test:external` yourself before a release.
-- `task test:zizmor` needs the `zizmor` binary on PATH. CI installs its own copy.
-- dprint formats Markdown, JSON, and TOML. No gate checks it, so run `dprint fmt` after you edit
-  those files.
+- Tests tagged `:external` reach live third-party endpoints. The default run and CI exclude them. Run
+  `task test:external` yourself before a release.
+- `task test:zizmor` needs `zizmor` on `PATH`. CI installs its own copy.
+- dprint formats Markdown, JSON, and TOML, but no check runs it. Run `dprint fmt` after you edit those files.
 
 ## Layout
 
-- `native/cloaked_req_native/` holds the Rust crate. It performs the network transport. The option
-  rules stay in Elixir: `lib/cloaked_req/request.ex` validates the adapter options and sets the
-  body-size, receive-timeout, and connect-timeout defaults. The native task replies on every path
-  except an abort after the caller died, so `lib/cloaked_req/native.ex` waits for the reply with no
-  timeout.
-- `checksum-Elixir.CloakedReq.Native.exs` is written by `.github/workflows/release.yml`. Never edit
-  it by hand.
+- `native/cloaked_req_native/` holds the Rust crate, which does the network transport. The option rules stay in Elixir:
+  `lib/cloaked_req/request.ex` validates the adapter options and sets the body-size, receive-timeout, and
+  connect-timeout defaults.
+- The native task replies on every path except an abort after the caller died, so `lib/cloaked_req/native.ex` waits for
+  the reply with no timeout.
+- `.github/workflows/release.yml` writes `checksum-Elixir.CloakedReq.Native.exs`. Never edit it by hand.
 
-## House decisions
+## Rules
 
-- `Taskfile.yml` exports `CLOAKED_REQ_BUILD=true`, so every task builds the NIF from source. A bare
-  `mix compile` downloads the precompiled NIF from the GitHub release instead and ignores your Rust
-  changes.
-- `mix format` runs the Styler plugin, which rewrites code. Read the diff it produces.
-- Credo runs `.credo.exs`, which adds the ExSlop check set on top of the defaults.
+- `Taskfile.yml` exports `CLOAKED_REQ_BUILD=true`, so every task builds the NIF from source. A bare `mix compile`
+  downloads the precompiled NIF from the GitHub release and ignores your Rust changes.
+- `mix format` runs Styler, which rewrites code. Read its diff.
 - The crate sets `unsafe_code = "forbid"`.
-- The package is LGPL-3.0-or-later. A new dependency has to be compatible with it.
+- The package is LGPL-3.0-or-later. A new dependency must be compatible with it.
 
 ## Pitfalls
 
-- Bumping `@version` in `mix.exs` and merging to `main` tags the version and builds the release
-  assets. Bump it only in a release PR; [RELEASE.md](RELEASE.md) has the rest.
-- A new build target needs the same entry in the `targets:` list of `lib/cloaked_req/native.ex` and
-  in the build matrix of `.github/workflows/release.yml`. One without the other publishes a release
-  that cannot load on that platform.
-- README promises glibc 2.34 for the Linux NIFs. The glibc check in `.github/workflows/release.yml`
-  holds that floor, not the runner image: Ubuntu 22.04 ships glibc 2.35. The check fails the release
-  when a NIF requires a glibc version newer than 2.34 or `GLIBC_ABI_DT_RELR`. A newer runner links
-  newer glibc versions and fails the check.
-- Bumping `wreq-util` changes the set of impersonation profiles. Regenerate the profile list in
-  README.md from the crate's `Profile` enum.
-- `native/cloaked_req_native/Cargo.toml` keeps its own version. Move it with `@version`.
+- A merge to `main` that bumps `@version` in `mix.exs` tags the version and builds the release assets. Bump it only in
+  a release PR; [RELEASE.md](RELEASE.md) has the rest.
+- `native/cloaked_req_native/Cargo.toml` has its own version. Move it with `@version`.
+- A new build target goes into both the `targets:` list in `lib/cloaked_req/native.ex` and the build matrix in
+  `.github/workflows/release.yml`. With only one of them, the release cannot load on that platform.
+- The README promises glibc 2.34 for the Linux NIFs. The glibc check in `.github/workflows/release.yml` holds that
+  floor, not the runner image (Ubuntu 22.04 ships glibc 2.35). The check fails when a NIF needs a newer glibc symbol or
+  `GLIBC_ABI_DT_RELR`, so a newer runner image fails it.
+- A `wreq-util` bump changes the impersonation profiles. Regenerate the list in the README from the crate's `Profile`
+  enum.

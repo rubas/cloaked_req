@@ -1,6 +1,7 @@
 # cloaked_req
 
-`cloaked_req` is a Req adapter backed by Rust [`wreq`](https://docs.rs/wreq/latest/wreq/). You keep Req ergonomics and send fingerprint-sensitive requests with a real browser's TLS and HTTP/2 signature.
+`cloaked_req` is a Req adapter on the Rust [`wreq`](https://docs.rs/wreq/latest/wreq/) crate. It sends each request
+with the TLS and HTTP/2 fingerprint of a real browser, and you keep the Req API.
 
 Docs: <https://hexdocs.pm/cloaked_req>
 
@@ -34,7 +35,7 @@ On any other platform, for example Intel macOS or Alpine (musl), build the NIF f
 
 ## Usage
 
-Use as a Req adapter:
+Attach the adapter to a request:
 
 ```elixir
 request =
@@ -54,28 +55,33 @@ request =
 
 ## Adapter options
 
-| Option                  | Type                        | Default | Description                                    |
-| ----------------------- | --------------------------- | ------- | ---------------------------------------------- |
-| `:impersonate`          | atom                        | `nil`   | Browser profile (e.g. `:chrome_136`)           |
-| `:cookie_jar`           | `CookieJar.t()`             | `nil`   | Automatic cookie persistence across requests   |
-| `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification              |
-| `:local_address`        | IP string or IP tuple       | `nil`   | Bind outbound requests to a specific source IP |
-| `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max request and response body size             |
-| `:pool`                 | `Pool.t()`                  | `nil`   | Dedicated, isolated client and connection pool |
+| Option                  | Type                        | Default | Description                                   |
+| ----------------------- | --------------------------- | ------- | --------------------------------------------- |
+| `:impersonate`          | atom                        | `nil`   | Browser profile, for example `:chrome_136`    |
+| `:cookie_jar`           | `CookieJar.t()`             | `nil`   | Stores and sends cookies across requests      |
+| `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification             |
+| `:local_address`        | IP string or IP tuple       | `nil`   | Source IP for outbound requests               |
+| `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max request and response body size            |
+| `:pool`                 | `Pool.t()`                  | `nil`   | Dedicated client with its own connection pool |
 
-`:max_body_size` caps both directions: a request body larger than the limit is rejected before sending, and a response body is truncated to an error once it exceeds the limit.
+`:max_body_size` applies in both directions. The adapter rejects a larger request body before it sends it, and returns an
+error when a response body grows past the limit. It counts decompressed bytes.
 
-Req's `:receive_timeout` (default 15s) starts with the request. Until the response headers arrive, it is one window that does not reset: DNS, connect, TLS, and the upload of the request body all count against it, so a large upload on a slow link needs a larger value. After the headers, it bounds each wait for the next body chunk, so a body that keeps arriving has no total limit.
+Req's `:receive_timeout` (default 15 s) starts with the request. Until the response headers arrive, it is one window
+that does not reset. DNS, connect, TLS, and the upload of the request body all count against it, so a large upload on a
+slow link needs a larger value. After the headers, it limits each wait for the next body chunk, so a body that keeps
+arriving has no total limit.
 
 ### Req connect options
 
-`CloakedReq` respects these Req `:connect_options`:
+`CloakedReq` supports these Req `:connect_options`:
 
-- `:timeout` - connect timeout in milliseconds for DNS, TCP, the proxy tunnel, and TLS, default 30s. `:receive_timeout` also runs during the connect, so the lower of the two applies.
-- `:proxy` - `{:http | :https, host, port, []}` proxy tuple
-- `:proxy_headers` - proxy headers, commonly used for proxy authentication
+- `:timeout`: connect timeout in milliseconds for DNS, TCP, the proxy tunnel, and TLS. The default is 30 s.
+  `:receive_timeout` also runs during the connect, so the lower of the two applies.
+- `:proxy`: a `{:http | :https, host, port, []}` tuple.
+- `:proxy_headers`: headers for the proxy, for example for proxy authentication.
 
-Unsupported connection options fail with an adapter error instead of being silently ignored.
+Any other connect option returns an adapter error.
 
 ```elixir
 Req.new(
@@ -101,7 +107,11 @@ A timeout, a refused connection, or a closed connection returns `%Req.TransportE
 
 ### Cookie jar
 
-Cookies are automatically stored from `set-cookie` response headers and sent with subsequent requests sharing the same jar. The jar validates the cookie domain against the public suffix list: it rejects cookies set on a public suffix and on a cross-origin domain. A `Domain` equal to a request host that is itself a public suffix, such as `localhost`, is kept as a host-only cookie. An explicit `cookie` header on a request wins over the jar, and the jar adds no cookies to that request. Over HTTP/2 the jar sends one `cookie` field per cookie.
+The jar stores the cookies from `set-cookie` response headers and sends them with later requests that use the same jar.
+It checks the cookie domain against the public suffix list and rejects a cookie set on a public suffix or on a
+cross-origin domain. When `Domain` equals a request host that is itself a public suffix, such as `localhost`, the jar
+keeps the cookie as host-only. An explicit `cookie` header on a request wins, and the jar adds no cookies to that
+request. Over HTTP/2 the jar sends one `cookie` field per cookie.
 
 ```elixir
 jar = CloakedReq.CookieJar.new()
@@ -119,9 +129,13 @@ Req.new(url: "https://example.com/dashboard")
 
 ### Connection pooling
 
-By default every request goes through a shared, bounded client cache: requests with the same impersonation profile, TLS verification, and connect timeout reuse one client and its connection pool. That keeps connection reuse high for most callers without any setup.
+By default every request goes through a shared client cache of limited size. Requests with the same impersonation
+profile, TLS verification, and connect timeout share one client and its connection pool. This needs no setup.
 
-For per-identity isolation, build a `CloakedReq.Pool`. A pool is a dedicated client with its own connections, TLS session cache, and HTTP/2 multiplexing, never shared with another identity. Build one per identity (per account, per proxy persona, per crawl) so a connection opened for one is never reused for another. Hold the pool in a worker's state and pass it to every request that worker makes.
+To keep identities apart, build a `CloakedReq.Pool`. A pool is a dedicated client with its own connections, TLS session
+cache, and HTTP/2 multiplexing. Build one per identity (per account, per proxy persona, per crawl), so no connection
+opened for one identity carries a request for another. Hold the pool in a worker's state and pass it to every request
+that worker makes.
 
 ```elixir
 pool = CloakedReq.Pool.new!(impersonate: :chrome_136)
@@ -131,13 +145,19 @@ Req.new(url: "https://example.com")
 |> Req.get!()
 ```
 
-The pool fixes the client at build time, so when a request runs through a pool, the pool's client governs the impersonation profile, TLS verification, and connect timeout; per-request `:impersonate`, `:insecure_skip_verify`, and the `:connect_options` connect timeout are ignored (still validated if given). Per-request proxy, source address, headers, body, cookie jar, and the receive timeout still apply. Each pool keeps up to 20 idle connections per host.
+A pool fixes its client when you build it. The pool sets the impersonation profile, TLS verification, and connect
+timeout. On a request through a pool, the adapter still validates `:impersonate`, `:insecure_skip_verify`, and the
+`:connect_options` timeout, but ignores them. The proxy, source address, headers, body, cookie jar, and receive timeout
+of each request still apply. Each pool keeps up to 20 idle connections per host.
 
-The client is garbage-collected by the BEAM when the pool struct is no longer referenced, so its idle connections close on their own. A worker that crashes without an explicit teardown cannot leak the pool. To rotate a pool's identity (for example after its upstream proxy exit changes), build a new pool and drop the old struct. Pass `:pool_idle_timeout` (milliseconds) to bound how long an idle connection is kept before it closes; the default uses wreq's own.
+The BEAM garbage-collects the client when nothing references the pool struct, and its idle connections close. A worker
+that crashes without a teardown cannot leak the pool. To change a pool's identity, for example after its proxy exit
+changes, build a new pool and drop the old struct. `:pool_idle_timeout` (milliseconds) sets how long an idle connection
+stays open. Without it, wreq's default applies.
 
 ## Impersonation profiles
 
-Profiles based on `wreq-util 0.2.0`. Profile atoms with a dot must be quoted, e.g. `:"safari_17.4.1"`.
+The profiles come from `wreq-util 0.2.0`. Quote a profile atom that has a dot, for example `:"safari_17.4.1"`.
 
 ### Chrome
 
@@ -168,5 +188,4 @@ Profiles based on `wreq-util 0.2.0`. Profile atoms with a dot must be quoted, e.
 - **No HTTP/3 or QUIC.** wreq speaks HTTP/1.1 and HTTP/2 only, so QUIC transport fingerprinting (JA4QUIC) is out of reach. When you need it, look at the Go library [surf](https://github.com/enetx/surf), which fingerprints QUIC; reaching it from Elixir means a sidecar or Port instead of a NIF.
 - **No streaming.** The adapter rejects `into:`. The request body must be a binary or iodata, so a stream fails. A `form_multipart` body with a `File.Stream` is a stream.
 - **Do not set `compressed: true`.** The profile sends its own `accept-encoding`, and wreq decompresses the response. `compressed: true` replaces the profile header and breaks the fingerprint. `raw: true` has no effect, because the body is already decompressed.
-- **`:max_body_size` counts decompressed bytes.**
-- **Finch-only options are ignored.** `:inet6`, `:unix_socket`, and `:request_timeout` have no effect. Use `:receive_timeout` and `connect_options: [timeout: ...]` for timeouts.
+- **No Finch-only options.** `:inet6`, `:unix_socket`, and `:request_timeout` have no effect. Use `:receive_timeout` and `connect_options: [timeout: ...]` for timeouts.

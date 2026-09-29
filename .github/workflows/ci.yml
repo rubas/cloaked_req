@@ -12,7 +12,7 @@ env:
 
 jobs:
   rust:
-    if: github.event_name == 'push' || github.event.pull_request.user.login == github.repository_owner
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     name: Rust
     runs-on: ubuntu-latest
     permissions:
@@ -47,7 +47,7 @@ jobs:
         run: cargo test --manifest-path native/cloaked_req_native/Cargo.toml
 
   zizmor:
-    if: github.event_name == 'push' || github.event.pull_request.user.login == github.repository_owner
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     name: zizmor
     runs-on: ubuntu-latest
     permissions:
@@ -68,7 +68,7 @@ jobs:
           "$RUNNER_TEMP/zizmor" --offline --persona=pedantic .github/workflows
 
   test:
-    if: github.event_name == 'push' || github.event.pull_request.user.login == github.repository_owner
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     name: OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }}
     runs-on: ubuntu-latest
     permissions:

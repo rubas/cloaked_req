@@ -135,7 +135,7 @@ jobs:
       # The audits do not depend on the OTP version, so one leg runs them.
       - name: Audit Hex dependencies
         if: matrix.audit
-        run: MIX_ENV=test mix deps.audit
+        run: MIX_ENV=test mix hex.audit
 
       - name: Sobelow
         if: matrix.audit

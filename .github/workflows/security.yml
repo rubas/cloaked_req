@@ -46,7 +46,7 @@ jobs:
           mix deps.get
 
       - name: Audit Hex dependencies
-        run: MIX_ENV=test mix deps.audit
+        run: MIX_ENV=test mix hex.audit
 
       - name: Install cargo-audit
         if: ${{ !cancelled() }}

@@ -47,6 +47,12 @@ defmodule CloakedReqHeadersTest do
     assert header(raw, "user-agent") == "my-crawler/2.0"
   end
 
+  test "a Latin-1 header value goes out as its raw bytes" do
+    raw = capture_request(&CloakedReq.attach/1, headers: [{"x-name", <<"M", 0xFC, "ller">>}])
+
+    assert raw =~ <<"x-name: M", 0xFC, "ller\r\n">>
+  end
+
   test "a compressed response still decodes with the profile accept-encoding" do
     body = String.duplicate("cloaked-req-", 500)
     headers = [{"content-type", "text/plain"}, {"content-encoding", "gzip"}]

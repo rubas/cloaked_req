@@ -35,9 +35,13 @@ description: |
 After the version-bump PR is merged to `main`:
 
 1. `.github/workflows/release.yml` reads the `mix.exs` version and looks for the tag `vX.Y.Z`.
-2. If the tag does not exist, the workflow creates it. If the tag exists, the workflow stops.
-3. The same workflow builds the precompiled NIF archives and publishes the GitHub release for `vX.Y.Z`.
-4. The workflow stops there. It does not touch `checksum-Elixir.CloakedReq.Native.exs`.
+2. If the tag exists, the workflow stops.
+3. The workflow builds the precompiled NIF archives.
+4. When all builds pass, the workflow creates the tag and publishes the GitHub release for `vX.Y.Z`.
+5. The workflow stops there. It does not touch `checksum-Elixir.CloakedReq.Native.exs`.
+
+A failed build leaves no tag, so the version stays free. When the cause was outside the code, re-run the failed jobs.
+After a fix in the code, the next push to `main` that changes `mix.exs` releases the same version.
 
 `main` is a protected branch. It needs signed commits and a pull request. A
 workflow cannot push to it. Thus you refresh the checksum file by hand, with a

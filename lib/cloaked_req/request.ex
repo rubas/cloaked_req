@@ -92,7 +92,7 @@ defmodule CloakedReq.Request do
       {:error, Error.new(:invalid_request, "request body must be binary or iodata")}
   end
 
-  @spec flatten_headers(map()) :: [{String.t(), String.t()}]
+  @spec flatten_headers(map()) :: [{String.t(), binary()}]
   defp flatten_headers(headers) do
     for {name, values} <- headers, value <- values, do: {name, value}
   end
@@ -195,7 +195,7 @@ defmodule CloakedReq.Request do
     {:error, Error.new(:invalid_request, "connect_options proxy must be {:http | :https, host, port, []}")}
   end
 
-  @spec normalize_proxy_headers(term()) :: {:ok, [{String.t(), String.t()}]} | {:error, Error.t()}
+  @spec normalize_proxy_headers(term()) :: {:ok, [{String.t(), binary()}]} | {:error, Error.t()}
   defp normalize_proxy_headers(headers) when is_list(headers) do
     if Enum.all?(headers, &match?({name, value} when is_binary(name) and is_binary(value), &1)) do
       {:ok, headers}

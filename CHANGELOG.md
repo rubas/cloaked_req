@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- A request header or proxy header value with bytes that are not UTF-8, such as the Latin-1 `<<"M", 0xFC, "ller">>`, returned `nif_panic: Could not decode field :headers`. The NIF now sends the raw bytes. A value with CR, LF, or NUL still returns `invalid_request`.
+
 ## [0.7.0] - 22.09.2026
 
 ### Fixed

@@ -1,10 +1,22 @@
-use rustler::NifMap;
+use rustler::types::binary::Binary;
+use rustler::{Decoder, NifMap, NifResult, Term};
+
+/// A request header value as raw bytes, so a Latin-1 value goes out unchanged.
+/// `HeaderValue` rejects the bytes that are invalid on the wire.
+#[derive(Debug)]
+pub struct RawHeaderBytes(pub Vec<u8>);
+
+impl<'a> Decoder<'a> for RawHeaderBytes {
+    fn decode(term: Term<'a>) -> NifResult<Self> {
+        Ok(Self(Binary::from_term(term)?.as_slice().to_vec()))
+    }
+}
 
 #[derive(Debug, NifMap)]
 #[rustler(decode)]
 pub struct NativeProxyConfig {
     pub url: String,
-    pub headers: Vec<(String, String)>,
+    pub headers: Vec<(String, RawHeaderBytes)>,
 }
 
 #[derive(Debug, NifMap)]
@@ -12,7 +24,7 @@ pub struct NativeProxyConfig {
 pub struct NativeRequest {
     pub method: String,
     pub url: String,
-    pub headers: Vec<(String, String)>,
+    pub headers: Vec<(String, RawHeaderBytes)>,
     pub receive_timeout_ms: u64,
     pub connect_timeout_ms: u64,
     pub proxy: Option<NativeProxyConfig>,

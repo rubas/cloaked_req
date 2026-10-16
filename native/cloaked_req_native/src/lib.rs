@@ -189,7 +189,7 @@ fn build_proxy(proxy_config: &NativeProxyConfig) -> Result<Proxy, NativeError> {
                     json!({"reason": reason.to_string(), "name": name}),
                 )
             })?;
-            let header_value = HeaderValue::from_str(value).map_err(|reason| {
+            let header_value = HeaderValue::from_bytes(&value.0).map_err(|reason| {
                 NativeError::new(
                     "invalid_request",
                     "invalid proxy header value",
@@ -406,7 +406,7 @@ async fn execute_request_async(
     }
 
     for (name, value) in &request.headers {
-        builder = builder.header(name.as_str(), value.as_str());
+        builder = builder.header(name.as_str(), value.0.as_slice());
     }
 
     // wreq skips the jar when the caller set a Cookie header, and stores each
@@ -527,6 +527,7 @@ rustler::init!("Elixir.CloakedReq.Native", load = on_load);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::request::RawHeaderBytes;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
@@ -616,11 +617,32 @@ mod tests {
     #[test]
     fn rejects_invalid_header_value_as_invalid_request() {
         let mut request = base_request();
-        request.headers = vec![("x-bad".to_string(), "a\nb".to_string())];
+        request.headers = vec![("x-bad".to_string(), RawHeaderBytes(b"a\nb".to_vec()))];
 
         let err = execute_request(request, None, None, None).expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "invalid request");
+    }
+
+    fn proxy_with_header_value(value: &[u8]) -> NativeProxyConfig {
+        NativeProxyConfig {
+            url: "http://127.0.0.1:8080".to_string(),
+            headers: vec![("x-proxy".to_string(), RawHeaderBytes(value.to_vec()))],
+        }
+    }
+
+    #[test]
+    fn proxy_accepts_latin1_header_value() {
+        assert!(build_proxy(&proxy_with_header_value(&[0xFC])).is_ok());
+    }
+
+    #[test]
+    fn proxy_rejects_newline_in_header_value_as_invalid_request() {
+        let Err(err) = build_proxy(&proxy_with_header_value(b"a\nb")) else {
+            panic!("expected error");
+        };
+        assert_eq!(err.type_name, "invalid_request");
+        assert_eq!(err.message, "invalid proxy header value");
     }
 
     #[test]
@@ -636,7 +658,7 @@ mod tests {
 
         let mut request = base_request();
         request.url = url;
-        request.headers = vec![("x-demo".to_string(), "1".to_string())];
+        request.headers = vec![("x-demo".to_string(), RawHeaderBytes(b"1".to_vec()))];
 
         let (meta, body) =
             execute_request(request, None, None, None).expect("request should succeed");

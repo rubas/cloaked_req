@@ -66,7 +66,9 @@ defmodule CloakedReq.MixProject do
       {:ex_slop, "~> 0.4", only: [:dev, :test], runtime: false},
       {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
+      # TODO(revert: a sobelow release after 0.16.0 is on Hex): pinned to the lockfile parse fix of sobelow/sobelow#50.
+      {:sobelow,
+       github: "sobelow/sobelow", ref: "ce7bc9ef6d8e39e2684128b76c84cb098d5fa9c2", only: [:dev, :test], runtime: false},
       {:styler, "~> 1.11", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.38", only: :dev, runtime: false}
     ]

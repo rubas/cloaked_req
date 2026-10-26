@@ -1,0 +1,10 @@
+# TODO(revert: when wreq-util releases zstd >= 0.14.3, 0x676e67/wreq-util#130): wreq-util 0.2.0,
+# the newest release, needs zstd ^0.13.3. It only calls `stream::write::Encoder::new` and
+# `stream::read::Decoder::new` for TLS certificate compression, and these calls reach none of the
+# affected functions.
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0391", # affects only raw::{Encoder,Decoder}::with_context
+  "RUSTSEC-2026-0398", # affects only the seekable feature, which is off
+  "RUSTSEC-2026-0403", # affects only stream::write::Decoder
+]

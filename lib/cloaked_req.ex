@@ -15,7 +15,16 @@ defmodule CloakedReq do
   alias CloakedReq.Request
   alias CloakedReq.Response
 
-  @custom_req_options [:cookie_jar, :impersonate, :insecure_skip_verify, :local_address, :max_body_size, :pool]
+  @custom_req_options [
+    :cookie_jar,
+    :default_headers,
+    :header_order,
+    :impersonate,
+    :insecure_skip_verify,
+    :local_address,
+    :max_body_size,
+    :pool
+  ]
 
   @doc """
   Attaches `CloakedReq` adapter behavior to an existing `Req.Request`.
@@ -28,6 +37,14 @@ defmodule CloakedReq do
     tunnel, and TLS.
   - `:receive_timeout` - Req option (default: 15 s). The README states what it bounds.
   - `:impersonate` - profile atom (e.g. `:chrome_136`, `:"safari_17.4.1"`)
+  - `:default_headers` - boolean (default: `true`). `false` keeps the
+    profile's TLS and HTTP/2 fingerprint but drops its default headers, so
+    the request's own headers are sent as the exact set, in the given order
+    (e.g. a `fetch()` request without navigation-only headers). wreq still
+    adds `accept-encoding` when the request has none, since it decodes the body
+  - `:header_order` - list of header names: the wire order of the request's
+    headers (Req keeps headers in a map, which loses order). Headers not in
+    the list follow it
   - `:insecure_skip_verify` - boolean
   - `:local_address` - outbound source IP as string, IPv4 tuple, or IPv6 tuple
   - `:max_body_size` - positive integer or `:unlimited` (default: 10 MB); caps

@@ -6,6 +6,7 @@ defmodule CloakedReqHeadersTest do
 
   use ExUnit.Case, async: true
 
+  alias CloakedReq.Pool
   alias CloakedReq.TestServer
 
   # Every header wreq emits for `:chrome_136`, in wire order, `host` excluded
@@ -53,6 +54,97 @@ defmodule CloakedReqHeadersTest do
     assert raw =~ <<"x-name: M", 0xFC, "ller\r\n">>
   end
 
+  describe "default_headers: false" do
+    # A fetch()-shaped set: no navigation-only sec-fetch-user or
+    # upgrade-insecure-requests, which a profile's defaults would add.
+    @fetch_headers [
+      {"sec-ch-ua", ~s("Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99")},
+      {"user-agent", "Mozilla/5.0 Chrome/136.0.0.0"},
+      {"accept", "*/*"},
+      {"sec-fetch-site", "same-origin"},
+      {"sec-fetch-mode", "cors"},
+      {"sec-fetch-dest", "empty"},
+      {"accept-encoding", "gzip, deflate, br, zstd"},
+      {"accept-language", "en-US,en;q=0.9"}
+    ]
+    @fetch_order Enum.map(@fetch_headers, &elem(&1, 0))
+
+    test "sends exactly the request headers, in header_order" do
+      raw =
+        capture_request(
+          &CloakedReq.attach(&1,
+            impersonate: :chrome_136,
+            default_headers: false,
+            header_order: @fetch_order
+          ),
+          headers: @fetch_headers
+        )
+
+      assert wire_headers(raw) == @fetch_headers
+    end
+
+    test "a pool built with default_headers: false governs its requests" do
+      {:ok, pool} = Pool.new(impersonate: :chrome_136, default_headers: false)
+
+      raw =
+        capture_request(
+          &CloakedReq.attach(&1,
+            pool: pool,
+            default_headers: true,
+            header_order: @fetch_order
+          ),
+          headers: @fetch_headers
+        )
+
+      assert wire_headers(raw) == @fetch_headers
+    end
+  end
+
+  # wreq decodes the body itself, so it asks for the encodings it can decode
+  # when the request does not. Send accept-encoding to own its value and place.
+  test "default_headers: false still gets wreq's accept-encoding when the request has none" do
+    raw =
+      capture_request(&CloakedReq.attach(&1, impersonate: :chrome_136, default_headers: false),
+        headers: [{"x-a", "1"}]
+      )
+
+    assert [{"x-a", "1"}, {"accept-encoding", _}] = wire_headers(raw)
+  end
+
+  describe "header_order" do
+    test "orders the profile's default headers too" do
+      order = ["accept-language", "user-agent"]
+      raw = capture_request(&CloakedReq.attach(&1, impersonate: :chrome_136, header_order: order))
+
+      assert raw |> wire_headers() |> Enum.take(2) |> Enum.map(&elem(&1, 0)) == order
+      assert length(wire_headers(raw)) == length(@chrome_136_headers)
+    end
+
+    test "names are case-insensitive" do
+      raw =
+        capture_request(
+          &CloakedReq.attach(&1,
+            impersonate: :chrome_136,
+            default_headers: false,
+            header_order: ["X-B", "X-A"]
+          ),
+          headers: [{"x-a", "1"}, {"x-b", "2"}, {"accept-encoding", "gzip"}]
+        )
+
+      assert wire_headers(raw) == [{"x-b", "2"}, {"x-a", "1"}, {"accept-encoding", "gzip"}]
+    end
+  end
+
+  test "invalid default_headers and header_order are rejected" do
+    req = Req.new(url: "http://127.0.0.1:1", retry: false)
+
+    assert {:error, %CloakedReq.AdapterError{error: %{message: "default_headers must be a boolean"}}} =
+             req |> CloakedReq.attach(default_headers: :no) |> Req.request()
+
+    assert {:error, %CloakedReq.AdapterError{error: %{message: "header_order must be a list of header name strings"}}} =
+             req |> CloakedReq.attach(header_order: [:accept]) |> Req.request()
+  end
+
   test "a compressed response still decodes with the profile accept-encoding" do
     body = String.duplicate("cloaked-req-", 500)
     headers = [{"content-type", "text/plain"}, {"content-encoding", "gzip"}]
@@ -83,6 +175,10 @@ defmodule CloakedReqHeadersTest do
     assert {:ok, %Req.Response{status: 200}} = Req.request(req)
     TestServer.get_request(server)
   end
+
+  # Headers as they reached the wire, minus `host` (its value carries the
+  # ephemeral port).
+  defp wire_headers(raw), do: raw |> headers() |> Enum.reject(&match?({"host", _}, &1))
 
   @spec headers(binary()) :: [{String.t(), String.t()}]
   defp headers(raw) do

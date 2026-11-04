@@ -6,6 +6,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- `:default_headers` option for a request and for `CloakedReq.Pool.new/1`, default `true`. With `false` the profile's TLS and HTTP/2 fingerprint stay, but its default headers are not sent, so the request's headers are the exact set. Before, a request header could replace a profile header but not remove it, so a `fetch()`-shaped request through a navigation profile still carried `sec-fetch-user` and `upgrade-insecure-requests`. A pool's value governs its requests, like `:impersonate`. wreq still adds `accept-encoding` when the request has none, because it decompresses the body.
+- `:header_order` option: header names in wire order. Req keeps request headers in a map, which loses their order, so the order travels separately. Headers not in the list follow it. Without default headers the request's own order is pinned even when `:header_order` is not given.
+
 ### Fixed
 
 - A request header or proxy header value with bytes that are not UTF-8, such as the Latin-1 `<<"M", 0xFC, "ller">>`, returned `nif_panic: Could not decode field :headers`. The NIF now sends the raw bytes. A value with CR, LF, or NUL still returns `invalid_request`.

@@ -28,6 +28,10 @@ defmodule CloakedReq.Pool do
   ## Options
 
   - `:impersonate` - profile atom (e.g. `:chrome_136`); `nil` for none
+  - `:default_headers` - boolean, default `true`. With `false` the profile's
+    TLS and HTTP/2 fingerprint stay, but its default headers are not sent:
+    the request's headers are the whole set, in the order given. wreq still
+    adds `accept-encoding` when the request has none, since it decodes the body
   - `:insecure_skip_verify` - boolean, default `false`
   - `:connect_timeout` - socket connect timeout in milliseconds, default 30_000
   - `:pool_idle_timeout` - how long an idle connection is kept before it is
@@ -83,12 +87,14 @@ defmodule CloakedReq.Pool do
   def new(options \\ []) when is_list(options) do
     with {:ok, options} <- validate_options(options),
          {:ok, emulation} <- Request.normalize_impersonate(options[:impersonate]),
+         {:ok, default_headers} <- Request.normalize_default_headers(options[:default_headers]),
          {:ok, insecure_skip_verify} <- Request.normalize_insecure_skip_verify(options[:insecure_skip_verify]),
          {:ok, connect_timeout} <- Request.normalize_connect_timeout(options[:connect_timeout], "connect_timeout"),
          {:ok, pool_idle_timeout} <- normalize_pool_idle_timeout(options[:pool_idle_timeout]),
          {:ok, ref} <-
            Native.new_pool(%{
              emulation: emulation,
+             default_headers: default_headers,
              insecure_skip_verify: insecure_skip_verify,
              connect_timeout_ms: connect_timeout,
              pool_idle_timeout_ms: pool_idle_timeout
@@ -123,6 +129,7 @@ defmodule CloakedReq.Pool do
            |> Keyword.new()
            |> Keyword.validate(
              impersonate: nil,
+             default_headers: true,
              insecure_skip_verify: false,
              connect_timeout: 30_000,
              pool_idle_timeout: nil

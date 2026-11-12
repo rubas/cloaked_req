@@ -8,7 +8,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
-- `:default_headers` request option, default `true`. With `false` the request keeps the profile's TLS and HTTP/2 fingerprint, but the profile's default headers are not sent, so the request's headers are the exact set. Before, a request header could replace a profile header but not remove it, so a `fetch()`-shaped request through a navigation profile still carried `sec-fetch-user` and `upgrade-insecure-requests`. The option applies to each request, also through a pool, so a navigation and a `fetch()` request share one connection. wreq still adds `accept-encoding` when the request has none, because it decompresses the body. Thanks to @someson for the report and the first version (#84).
+- `:default_headers` request option, default `true`. With `false` the request keeps the profile's TLS and HTTP/2 fingerprint, but the profile's default headers are not sent, and the request's headers take their place. Before, a request header could replace a profile header but not remove it, so a `fetch()`-shaped request through a navigation profile still carried `sec-fetch-user` and `upgrade-insecure-requests`. The option applies to each request, also through a pool, so a navigation and a `fetch()` request share one connection. wreq still adds what the transport needs: `host`, `content-length`, `cookie` from the cookie jar, and `accept-encoding` when the request has none. Thanks to @someson for the report and the first version (#84).
 - `:header_order` request option: header names in wire order. Req keeps request headers in a map, which loses their order, so the order travels separately. Headers not in the list follow it.
 
 ### Fixed

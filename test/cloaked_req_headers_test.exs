@@ -141,8 +141,10 @@ defmodule CloakedReqHeadersTest do
     assert {:error, %CloakedReq.AdapterError{error: %{message: "default_headers must be a boolean"}}} =
              req |> CloakedReq.attach(default_headers: :no) |> Req.request()
 
-    assert {:error, %CloakedReq.AdapterError{error: %{message: "header_order must be a list of header name strings"}}} =
-             req |> CloakedReq.attach(header_order: [:accept]) |> Req.request()
+    for header_order <- [[:accept], "accept", ["bad name"], [<<255>>], [""]] do
+      assert {:error, %CloakedReq.AdapterError{error: %{message: "header_order must be a list of header names"}}} =
+               req |> CloakedReq.attach(header_order: header_order) |> Req.request()
+    end
   end
 
   test "a compressed response still decodes with the profile accept-encoding" do

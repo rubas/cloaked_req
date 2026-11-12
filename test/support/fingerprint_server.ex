@@ -4,6 +4,9 @@ defmodule CloakedReq.FingerprintServer do
   # Local stand-ins for a fingerprint echo site. `start_h2/0` serves HTTP/2
   # over TLS and reports each request with the HTTP/2 fingerprint of its
   # connection. `client_hello/1` reads the TLS ClientHello a request opens with.
+  #
+  # HPAX decodes the request headers. It is Mint's HPACK library and comes with
+  # Req, so this module needs no dependency of its own.
 
   import Bitwise
 
@@ -27,7 +30,7 @@ defmodule CloakedReq.FingerprintServer do
   @spec start_h2() :: String.t()
   def start_h2 do
     caller = self()
-    %{server_config: tls} = :public_key.pkix_test_data(%{server_chain: chain(), client_chain: chain()})
+    tls = :public_key.pkix_test_data(chain())
 
     {:ok, listen} =
       :ssl.listen(

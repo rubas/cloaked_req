@@ -149,16 +149,20 @@ defmodule CloakedReq.Request do
   defp normalize_header_order(nil), do: {:ok, nil}
 
   defp normalize_header_order(names) when is_list(names) do
-    if Enum.all?(names, &is_binary/1) do
+    if Enum.all?(names, &header_name?/1) do
       {:ok, Enum.map(names, &String.downcase/1)}
     else
-      {:error, Error.new(:invalid_request, "header_order must be a list of header name strings")}
+      {:error, Error.new(:invalid_request, "header_order must be a list of header names")}
     end
   end
 
   defp normalize_header_order(_value) do
-    {:error, Error.new(:invalid_request, "header_order must be a list of header name strings")}
+    {:error, Error.new(:invalid_request, "header_order must be a list of header names")}
   end
+
+  # RFC 9110 token. wreq drops a name it cannot parse from the order without an error.
+  @spec header_name?(term()) :: boolean()
+  defp header_name?(name), do: is_binary(name) and name =~ ~r/\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z/
 
   @spec normalize_receive_timeout(term()) :: {:ok, pos_integer()} | {:error, Error.t()}
   defp normalize_receive_timeout(value) when is_integer(value) and value > 0, do: {:ok, value}

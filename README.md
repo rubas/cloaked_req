@@ -81,12 +81,12 @@ remove one. So a navigation profile keeps `sec-fetch-user` and `upgrade-insecure
 request, and no browser sends that pair there.
 
 `default_headers: false` keeps the profile's TLS and HTTP/2 fingerprint, but does not send its default headers. The
-request's headers are then the whole set. wreq still adds `accept-encoding` when the request has none, because it
-decompresses the body.
+request's headers take their place. wreq still adds what the transport needs: `host`, `content-length` for a body,
+`cookie` from the cookie jar, and `accept-encoding` when the request has none, because it decompresses the body.
 
 Req keeps request headers in a map, which loses their order. `:header_order` lists header names in wire order. Headers
-that are not in the list follow it. Without the profile's defaults there is no profile order, and the headers go out
-sorted by name, so pass `:header_order` with `default_headers: false`.
+that are not in the list follow it, in no defined order. Without the profile's defaults there is no profile order, so
+pass `:header_order` with `default_headers: false`.
 
 Both options apply to each request, also through a pool. A navigation with the profile's headers and a `fetch()`
 request with `default_headers: false` share the same connections, as they do in a browser.

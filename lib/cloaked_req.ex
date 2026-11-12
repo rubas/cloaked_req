@@ -39,9 +39,10 @@ defmodule CloakedReq do
   - `:impersonate` - profile atom (e.g. `:chrome_136`, `:"safari_17.4.1"`)
   - `:default_headers` - boolean (default: `true`). `false` keeps the
     profile's TLS and HTTP/2 fingerprint but drops its default headers for
-    this request, so the request's own headers are the exact set (e.g. a
+    this request, so the request's own headers take their place (e.g. a
     `fetch()` request without navigation-only headers). wreq still adds
-    `accept-encoding` when the request has none, since it decodes the body
+    what the transport needs: `host`, `content-length`, `cookie` from the
+    cookie jar, and `accept-encoding` when the request has none
   - `:header_order` - list of header names: the wire order of the request's
     headers (Req keeps headers in a map, which loses order). Headers not in
     the list follow it

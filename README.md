@@ -185,7 +185,7 @@ stays open. Without it, wreq's default applies.
 
 ## Impersonation profiles
 
-The profiles come from `wreq-util 0.2.0`. Quote a profile atom that has a dot, for example `:"safari_17.4.1"`.
+The profiles come from `wreq-util 0.2.1`. Quote a profile atom that has a dot, for example `:"safari_17.4.1"`.
 
 ### Chrome
 

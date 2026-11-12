@@ -18,9 +18,9 @@ psl = "2"
 rustler = { version = "0.38", default-features = false, features = ["derive", "serde"] }
 serde_json = "1"
 tokio = { version = "1", features = ["net", "rt-multi-thread", "time"] }
-wreq = { version = "0.16.1", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies", "stream"] }
+wreq = { version = "0.16.3", features = ["hickory-dns", "gzip", "brotli", "zstd", "deflate", "cookies", "stream"] }
 wreq-proto = "0.2"
-wreq-util = { version = "0.2.0", features = ["emulation-serde", "emulation-compression"] }
+wreq-util = { version = "0.2.1", features = ["emulation-serde", "emulation-compression"] }
 
 [lints.rust]
 unsafe_code = "forbid"

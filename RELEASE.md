@@ -72,7 +72,7 @@ version that has its tag, starts the `Publish to Hex` job of
 `.github/workflows/release.yml`. The job publishes the tree of that merge:
 
 1. It compares the checksum file with the `SHA256SUMS` of the GitHub release, and stops when they differ.
-2. It runs `mix hex.publish --yes`, which publishes the package and its docs.
+2. It runs `mix hex.publish --yes`, which uploads the package and its docs.
 
 The job stores no Hex key. It runs in the GitHub environment `hex`, which only
 `main` can use, and Hex exchanges the job's OIDC token for a token that can
@@ -81,7 +81,14 @@ hex.pm, in its tab "Workload identities": repository owner `rubas`, repository
 `cloaked_req`, workflow `release.yml`, environment `hex`. Only a full owner of
 the package can add or change it.
 
+The package has staged publishing on. Hex holds each release from the job, and
+the job ends with `Package staged for approval at <url>`. A package owner
+approves it on hex.pm with their 2FA, within 7 days. The job does not wait for
+that approval: a GitHub job stops after 6 hours.
+
 When the job fails, fix the cause and re-run the job. It publishes the same commit.
+A failed docs upload prints `Publishing failed` but leaves the job green, so read
+the end of its log.
 
 ## Gotchas
 

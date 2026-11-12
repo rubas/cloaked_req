@@ -59,6 +59,8 @@ request =
 | ----------------------- | --------------------------- | ------- | --------------------------------------------- |
 | `:impersonate`          | atom                        | `nil`   | Browser profile, for example `:chrome_136`    |
 | `:cookie_jar`           | `CookieJar.t()`             | `nil`   | Stores and sends cookies across requests      |
+| `:default_headers`      | boolean                     | `true`  | Send the profile's default headers            |
+| `:header_order`         | list of header names        | `nil`   | Wire order of the request headers             |
 | `:insecure_skip_verify` | boolean                     | `false` | Skip TLS certificate verification             |
 | `:local_address`        | IP string or IP tuple       | `nil`   | Source IP for outbound requests               |
 | `:max_body_size`        | pos_integer \| `:unlimited` | 10 MB   | Max request and response body size            |
@@ -71,6 +73,32 @@ Req's `:receive_timeout` (default 15 s) starts with the request. Until the respo
 that does not reset. DNS, connect, TLS, and the upload of the request body all count against it, so a large upload on a
 slow link needs a larger value. After the headers, it limits each wait for the next body chunk, so a body that keeps
 arriving has no total limit.
+
+### Exact header sets
+
+A profile sends its own default headers. A request header replaces a profile header with the same name, but cannot
+remove one. So a navigation profile keeps `sec-fetch-user` and `upgrade-insecure-requests` on a `fetch()`-shaped
+request, and no browser sends that pair there.
+
+`default_headers: false` keeps the profile's TLS and HTTP/2 fingerprint, but does not send its default headers. The
+request's headers take their place. wreq still adds what the transport needs: `host`, `content-length` for a body,
+`cookie` from the cookie jar, and `accept-encoding` when the request has none, because it decompresses the body.
+
+Req keeps request headers in a map, which loses their order. `:header_order` lists header names in wire order. Headers
+that are not in the list follow it, in no defined order. Without the profile's defaults there is no profile order, so
+pass `:header_order` with `default_headers: false`.
+
+Both options apply to each request, also through a pool. A navigation with the profile's headers and a `fetch()`
+request with `default_headers: false` share the same connections, as they do in a browser.
+
+```elixir
+Req.new(url: "https://example.com/api", headers: headers)
+|> CloakedReq.attach(
+  impersonate: :chrome_136,
+  default_headers: false,
+  header_order: Enum.map(headers, &elem(&1, 0))
+)
+```
 
 ### Req connect options
 

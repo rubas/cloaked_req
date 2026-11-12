@@ -20,7 +20,7 @@ use rustler::types::binary::{Binary, NewBinary};
 use rustler::{Encoder, Env, LocalPid, Monitor, OwnedEnv, ResourceArc, Term};
 use serde_json::{Value, json};
 use wreq::cookie::{CookieStore, Cookies, Jar};
-use wreq::header::{HeaderMap, HeaderName, HeaderValue};
+use wreq::header::{HeaderMap, HeaderName, HeaderValue, OrigHeaderMap};
 use wreq::{Client, Method, Proxy, Uri, Version};
 use wreq_util::Profile;
 
@@ -409,6 +409,23 @@ async fn execute_request_async(
         builder = builder.header(name.as_str(), value.0.as_slice());
     }
 
+    // The profile's default headers are the client's default headers. The
+    // switch is per request, so a navigation and a fetch() share one client
+    // and its connections, as they do in a browser.
+    if !request.default_headers {
+        builder = builder.default_headers(false);
+    }
+
+    // wreq writes the listed headers first, in this order, and then the rest
+    // in the order they had.
+    if let Some(names) = &request.header_order {
+        let mut order = OrigHeaderMap::with_capacity(names.len());
+        for name in names {
+            order.insert(name.clone());
+        }
+        builder = builder.orig_headers(order);
+    }
+
     // wreq skips the jar when the caller set a Cookie header, and stores each
     // set-cookie against the URI it sent the request to.
     if let Some(jar) = cookie_jar {
@@ -582,10 +599,12 @@ mod tests {
             method: "GET".to_string(),
             url: "http://example.com".to_string(),
             headers: vec![],
+            header_order: None,
             receive_timeout_ms: 5_000,
             connect_timeout_ms: 30_000,
             proxy: None,
             emulation: None,
+            default_headers: true,
             insecure_skip_verify: false,
             max_body_size_bytes: None,
             local_address: None,
@@ -856,10 +875,12 @@ mod tests {
             method: "GET".to_string(),
             url: "https://thumbprint.me/api/v1/probe".to_string(),
             headers: vec![],
+            header_order: None,
             receive_timeout_ms: 20_000,
             connect_timeout_ms: 30_000,
             proxy: None,
             emulation: Some("chrome_136".to_string()),
+            default_headers: true,
             insecure_skip_verify: false,
             max_body_size_bytes: None,
             local_address: None,

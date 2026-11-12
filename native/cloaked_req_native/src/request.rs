@@ -25,10 +25,14 @@ pub struct NativeRequest {
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, RawHeaderBytes)>,
+    /// Wire order of header names. Req keeps headers in a map, so the order
+    /// the caller wants has to travel separately.
+    pub header_order: Option<Vec<String>>,
     pub receive_timeout_ms: u64,
     pub connect_timeout_ms: u64,
     pub proxy: Option<NativeProxyConfig>,
     pub emulation: Option<String>,
+    pub default_headers: bool,
     pub insecure_skip_verify: bool,
     pub max_body_size_bytes: Option<u64>,
     pub local_address: Option<String>,

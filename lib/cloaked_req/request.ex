@@ -29,28 +29,27 @@ defmodule CloakedReq.Request do
          {:ok, max_body_size} <-
            normalize_max_body_size(get_option(request, :max_body_size, @default_max_body_size)),
          {:ok, body} <- normalize_body(request.body, max_body_size),
-         {:ok, emulation} <- normalize_impersonate(get_option(request, :impersonate)),
+         {:ok, client_options} <- normalize_client_options(request),
          {:ok, receive_timeout} <-
            normalize_receive_timeout(get_option(request, :receive_timeout, 15_000)),
          {:ok, connect_options} <-
            normalize_connect_options(get_option(request, :connect_options, [])),
-         {:ok, insecure_skip_verify} <-
-           normalize_insecure_skip_verify(get_option(request, :insecure_skip_verify, false)),
          {:ok, local_address} <-
            normalize_local_address(get_option(request, :local_address)) do
       {:ok,
-       {%{
-          method: request.method |> Atom.to_string() |> String.upcase(),
-          url: URI.to_string(request.url),
-          headers: flat_headers,
-          receive_timeout_ms: receive_timeout,
-          connect_timeout_ms: connect_options.timeout,
-          proxy: connect_options.proxy,
-          emulation: emulation,
-          insecure_skip_verify: insecure_skip_verify,
-          max_body_size_bytes: max_body_size,
-          local_address: local_address
-        }, body}}
+       {Map.merge(
+          %{
+            method: request.method |> Atom.to_string() |> String.upcase(),
+            url: URI.to_string(request.url),
+            headers: flat_headers,
+            receive_timeout_ms: receive_timeout,
+            connect_timeout_ms: connect_options.timeout,
+            proxy: connect_options.proxy,
+            max_body_size_bytes: max_body_size,
+            local_address: local_address
+          },
+          client_options
+        ), body}}
     end
   end
 
@@ -110,6 +109,60 @@ defmodule CloakedReq.Request do
   def normalize_impersonate(_value) do
     {:error, Error.new(:invalid_request, "impersonate must be a profile atom")}
   end
+
+  # The options that shape the fingerprint: the profile, whether its default
+  # headers are sent, the header order, and TLS verification.
+  @spec normalize_client_options(Req.Request.t()) ::
+          {:ok,
+           %{
+             emulation: nil | String.t(),
+             default_headers: boolean(),
+             header_order: nil | [String.t()],
+             insecure_skip_verify: boolean()
+           }}
+          | {:error, Error.t()}
+  defp normalize_client_options(request) do
+    with {:ok, emulation} <- normalize_impersonate(get_option(request, :impersonate)),
+         {:ok, default_headers} <- normalize_default_headers(get_option(request, :default_headers, true)),
+         {:ok, header_order} <- normalize_header_order(get_option(request, :header_order)),
+         {:ok, insecure_skip_verify} <-
+           normalize_insecure_skip_verify(get_option(request, :insecure_skip_verify, false)) do
+      {:ok,
+       %{
+         emulation: emulation,
+         default_headers: default_headers,
+         header_order: header_order,
+         insecure_skip_verify: insecure_skip_verify
+       }}
+    end
+  end
+
+  @spec normalize_default_headers(term()) :: {:ok, boolean()} | {:error, Error.t()}
+  defp normalize_default_headers(value) when is_boolean(value), do: {:ok, value}
+
+  defp normalize_default_headers(_value) do
+    {:error, Error.new(:invalid_request, "default_headers must be a boolean")}
+  end
+
+  # Lowercases the names, like the names Req stores.
+  @spec normalize_header_order(term()) :: {:ok, nil | [String.t()]} | {:error, Error.t()}
+  defp normalize_header_order(nil), do: {:ok, nil}
+
+  defp normalize_header_order(names) when is_list(names) do
+    if Enum.all?(names, &header_name?/1) do
+      {:ok, Enum.map(names, &String.downcase/1)}
+    else
+      {:error, Error.new(:invalid_request, "header_order must be a list of header names")}
+    end
+  end
+
+  defp normalize_header_order(_value) do
+    {:error, Error.new(:invalid_request, "header_order must be a list of header names")}
+  end
+
+  # RFC 9110 token. wreq drops a name it cannot parse from the order without an error.
+  @spec header_name?(term()) :: boolean()
+  defp header_name?(name), do: is_binary(name) and name =~ ~r/\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\z/
 
   @spec normalize_receive_timeout(term()) :: {:ok, pos_integer()} | {:error, Error.t()}
   defp normalize_receive_timeout(value) when is_integer(value) and value > 0, do: {:ok, value}

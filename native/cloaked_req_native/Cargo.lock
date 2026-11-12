@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "cloaked_req_native"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "bytes",
  "cookie",

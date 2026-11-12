@@ -6,6 +6,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.8.1] - 12.11.2026
+
+### Security
+
+- The NIF now builds with zstd 0.14.3 and zstd-safe 8.2.0, through `wreq-util` 0.2.1. The older versions carried RUSTSEC-2026-0391, RUSTSEC-2026-0398, and RUSTSEC-2026-0403. The NIF never called the affected functions.
+
+### Changed
+
+- `wreq` 0.16.3. The impersonation profiles and their TLS and HTTP/2 fingerprints are unchanged.
+
 ## [0.8.0] - 12.11.2026
 
 ### Added

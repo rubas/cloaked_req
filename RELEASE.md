@@ -63,10 +63,10 @@ task checksum:download
 
 The task builds the NIF of the new `@version` from source first, because
 `mix rustler_precompiled.download` reads the version and the targets from the
-metadata of the last compile, in a user cache that every checkout shares. Then
-it downloads each asset from the GitHub release, and verifies it. It fails when
-an asset is missing. Commit the new `checksum-Elixir.CloakedReq.Native.exs`,
-and open a pull request.
+metadata of the last compile. The task keeps that metadata in `_build`, where a
+compile in another checkout cannot change it. Then it downloads each asset from
+the GitHub release, and verifies it. It fails when an asset is missing. Commit
+the new `checksum-Elixir.CloakedReq.Native.exs`, and open a pull request.
 
 ### 2. Merge the checksum PR
 

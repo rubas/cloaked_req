@@ -73,11 +73,12 @@ tasks:
 
   checksum:download:
     desc: Write the checksum file from the NIF archives of the GitHub release of @version
+    # The download reads the version and the targets from the metadata of the last compile. A cache
+    # in this checkout keeps a compile in another checkout from changing it, and --force writes it.
+    env:
+      RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH: "{{.ROOT_DIR}}/_build/rustler_precompiled"
     cmds:
-      # The download takes the version and the targets from the metadata that the last compile of
-      # CloakedReq.Native wrote to the user cache, maybe in another checkout. --force writes it anew.
-      - mix compile --force
-      - mix rustler_precompiled.download CloakedReq.Native --all --print
+      - mix do compile --force + rustler_precompiled.download CloakedReq.Native --all --print
 
   test:rust:external:
     cmds:

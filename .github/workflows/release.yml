@@ -149,6 +149,27 @@ jobs:
           CARGO_PROFILE_RELEASE_STRIP: "true"
         run: cargo build --release --target "$TARGET"
 
+      # The BEAM binds every symbol of a NIF when it loads it, and only the enif_* functions come from
+      # the BEAM. Any other symbol that no library of the NIF defines fails the load. ldd -r binds the
+      # same way, and nm lists the symbols that macOS leaves to the load.
+      - name: Check that the NIF loads
+        shell: bash
+        env:
+          NIF: native/cloaked_req_native/target/${{ matrix.target }}/release/libcloaked_req_native.${{ matrix.lib_ext }}
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            REPORT="$(nm -m -u "$NIF")"
+            MISSING="$(grep 'dynamically looked up' <<< "$REPORT" | grep -v ' _enif_' || true)"
+          else
+            REPORT="$(ldd -r "$NIF" 2>&1)" || { echo "$REPORT"; exit 1; }
+            MISSING="$(grep -E 'not found|undefined symbol' <<< "$REPORT" | grep -v 'undefined symbol: enif_' || true)"
+          fi
+          if [ -n "$MISSING" ]; then
+            echo "$MISSING"
+            echo "::error::The NIF does not load: it needs the libraries or symbols above"
+            exit 1
+          fi
+
       - name: Check glibc floor
         if: runner.os == 'Linux'
         shell: bash
@@ -269,9 +290,16 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}-publish
       cancel-in-progress: false
     steps:
+      # The package holds the sources of the tag, which the NIF archives were built from, and the
+      # checksum file of the merge that publishes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ needs.detect.outputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Take the checksum file of the merge
+        run: git checkout "$GITHUB_SHA" -- checksum-Elixir.CloakedReq.Native.exs
 
       # Hex versions are immutable, so a package with checksums of other archives stays broken.
       - name: Compare the checksum file with the release
@@ -291,12 +319,19 @@ jobs:
           otp-version: "29.1.2"
 
       - name: Install dependencies
-        run: |
-          mix local.hex --force
-          mix local.rebar --force
-          mix deps.get
+        run: mix deps.get
 
-      # With no Hex credential in the job, Hex publishes through the workload identity. The compile
-      # downloads the precompiled NIF of this runner and checks it against the checksum file.
+      # The compile downloads the precompiled NIF of this runner and checks it against the checksum
+      # file, as a consumer's build does.
+      - name: Load the precompiled NIF
+        run: mix run --no-start -e 'Code.ensure_loaded!(CloakedReq.Native)'
+
+      # With no Hex credential in the job, Hex publishes through the workload identity. A failed upload
+      # of the docs still exits 0, so the step reads the log.
       - name: Publish the package and its docs
-        run: mix hex.publish --yes
+        shell: bash
+        run: |
+          mix hex.publish --yes 2>&1 | tee "$RUNNER_TEMP/publish.log"
+          if grep -E 'Publishing (docs )?failed' "$RUNNER_TEMP/publish.log"; then
+            exit 1
+          fi

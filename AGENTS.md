@@ -17,7 +17,7 @@ crate.
   connect-timeout defaults.
 - The native task replies on every path except an abort after the caller died, so `lib/cloaked_req/native.ex` waits for
   the reply with no timeout.
-- `.github/workflows/release.yml` writes `checksum-Elixir.CloakedReq.Native.exs`. Never edit it by hand.
+- `mix rustler_precompiled.download` writes `checksum-Elixir.CloakedReq.Native.exs`. Never edit it by hand.
 
 ## Rules
 
@@ -31,6 +31,8 @@ crate.
 
 - A merge to `main` that bumps `@version` in `mix.exs` tags the version and builds the release assets. Bump it only in
   a release PR; [RELEASE.md](RELEASE.md) has the rest.
+- A merge to `main` that changes `checksum-Elixir.CloakedReq.Native.exs` publishes the version to Hex, and Hex versions
+  are immutable. Change that file only in the checksum PR of a release.
 - `native/cloaked_req_native/Cargo.toml` has its own version. Move it with `@version`.
 - A new build target goes into both the `targets:` list in `lib/cloaked_req/native.ex` and the build matrix in
   `.github/workflows/release.yml`. With only one of them, the release cannot load on that platform.

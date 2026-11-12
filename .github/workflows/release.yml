@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - mix.exs
+      - checksum-Elixir.CloakedReq.Native.exs
   workflow_dispatch:
     inputs:
       tag:
@@ -28,6 +29,7 @@ jobs:
       cancel-in-progress: false
     outputs:
       should_release: ${{ steps.resolve.outputs.should_release }}
+      should_publish: ${{ steps.resolve.outputs.should_publish }}
       tag: ${{ steps.resolve.outputs.tag }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
@@ -42,7 +44,10 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          BEFORE: ${{ github.event.before }}
         run: |
+          SHOULD_PUBLISH=false
+
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             TAG="$INPUT_TAG"
             if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
@@ -65,12 +70,19 @@ jobs:
             # after a cancelled one, still releases a version that has no tag.
             if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
               SHOULD_RELEASE=false
+
+              # The merge of the checksum PR publishes: only then does main hold the checksums of the
+              # release assets, and the Hex package must carry them.
+              if git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qxF checksum-Elixir.CloakedReq.Native.exs; then
+                SHOULD_PUBLISH=true
+              fi
             else
               SHOULD_RELEASE=true
             fi
           fi
 
           echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "should_publish=$SHOULD_PUBLISH" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -242,3 +254,49 @@ jobs:
             artifacts/*.tar.gz
             artifacts/SHA256SUMS
           generate_release_notes: true
+
+  publish:
+    name: Publish to Hex
+    needs: detect
+    if: needs.detect.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    # The Hex workload identity of the package names this environment and this workflow file.
+    environment: hex
+    permissions:
+      contents: read # check out the repository
+      id-token: write # mix hex.publish exchanges the job's OIDC token for a Hex token
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Hex versions are immutable, so a package with checksums of other archives stays broken.
+      - name: Compare the checksum file with the release
+        env:
+          TAG: ${{ needs.detect.outputs.tag }}
+        run: |
+          diff \
+            <(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/SHA256SUMS" | awk '{print $2 " sha256:" $1}' | sort) \
+            <(sed -n 's/^  "\(.*\)" => "\(sha256:.*\)",$/\1 \2/p' checksum-Elixir.CloakedReq.Native.exs | sort)
+
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        env:
+          INSTALL_DIR_FOR_OTP: ${{ runner.tool_cache }}/setup-beam/otp-29.1.2
+          INSTALL_DIR_FOR_ELIXIR: ${{ runner.tool_cache }}/setup-beam/elixir-1.20.5
+        with:
+          elixir-version: "1.20.5"
+          otp-version: "29.1.2"
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      # With no Hex credential in the job, Hex publishes through the workload identity. The compile
+      # downloads the precompiled NIF of this runner and checks it against the checksum file.
+      - name: Publish the package and its docs
+        run: mix hex.publish --yes

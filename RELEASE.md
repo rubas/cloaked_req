@@ -15,12 +15,12 @@ description: |
 
 ## Quick Reference
 
-| Step                         | Trigger           | Output                                  |
-| ---------------------------- | ----------------- | --------------------------------------- |
-| Bump `@version` in `mix.exs` | PR to `main`      | Release candidate commit                |
-| Merge version bump to `main` | `release.yml`     | `vX.Y.Z` tag and GitHub release         |
-| Refresh the checksum file    | PR to `main`      | `checksum-Elixir.CloakedReq.Native.exs` |
-| Publish package              | `mix hex.publish` | Hex package and HexDocs docs            |
+| Step                         | Trigger       | Output                                  |
+| ---------------------------- | ------------- | --------------------------------------- |
+| Bump `@version` in `mix.exs` | PR to `main`  | Release candidate commit                |
+| Merge version bump to `main` | `release.yml` | `vX.Y.Z` tag and GitHub release         |
+| Refresh the checksum file    | PR to `main`  | `checksum-Elixir.CloakedReq.Native.exs` |
+| Merge the checksum PR        | `release.yml` | Hex package and HexDocs docs            |
 
 ## Version Bump Rules
 
@@ -49,11 +49,11 @@ pull request.
 
 Use the workflow's manual dispatch only to re-run a release for the current version tag after fixing workflow issues. The dispatch builds the code at that tag and fails when the tag does not exist.
 
-## Exact Hex Release Steps
+## Hex Release
 
-Run these steps only after the GitHub release for the same version exists, and all NIF archives are attached.
+Start only after the GitHub release for the same version exists, and all NIF archives are attached.
 
-### 1. Refresh the checksum file and merge it to `main`
+### 1. Refresh the checksum file
 
 ```bash
 git fetch origin
@@ -63,39 +63,29 @@ CLOAKED_REQ_BUILD=1 mix rustler_precompiled.download CloakedReq.Native --all
 
 The task compiles the new `@version`, downloads each asset from the GitHub
 release, and verifies it. It fails when an asset is missing. Commit the new
-`checksum-Elixir.CloakedReq.Native.exs`, open a pull request, and merge it. Then
-move your checkout to the new `main`:
+`checksum-Elixir.CloakedReq.Native.exs`, and open a pull request.
 
-```bash
-git fetch origin
-git switch --detach origin/main
-```
+### 2. Merge the checksum PR
 
-### 2. Confirm the checksum file references the release you are about to publish
+The merge publishes. A push to `main` that changes the checksum file, for a
+version that has its tag, starts the `Publish to Hex` job of
+`.github/workflows/release.yml`. The job publishes the tree of that merge:
 
-```bash
-rg -F 'vX.Y.Z' checksum-Elixir.CloakedReq.Native.exs
-```
+1. It compares the checksum file with the `SHA256SUMS` of the GitHub release, and stops when they differ.
+2. It runs `mix hex.publish --yes`, which publishes the package and its docs.
 
-Replace `X.Y.Z` with the version you are releasing. The checksum file must reference the same GitHub release assets as `@version`.
+The job stores no Hex key. It runs in the GitHub environment `hex`, which only
+`main` can use, and Hex exchanges the job's OIDC token for a token that can
+only publish `cloaked_req`. For that, the package has a workload identity on
+hex.pm, in its tab "Workload identities": repository owner `rubas`, repository
+`cloaked_req`, workflow `release.yml`, environment `hex`. Only a full owner of
+the package can add or change it.
 
-### 3. Verify the package from the exact publishing tree
-
-```bash
-mix hex.build
-mix docs
-```
-
-### 4. Publish the package
-
-```bash
-mix hex.publish
-```
+When the job fails, fix the cause and re-run the job. It publishes the same commit.
 
 ## Gotchas
 
-- Do not publish to Hex before the GitHub release exists. `RustlerPrecompiled` loads assets from the GitHub release URL derived from `@version`.
 - Do not reuse versions. Hex versions are immutable.
-- `mix hex.publish` publishes documentation automatically. Use `mix hex.publish package` only if you intentionally want to skip docs.
-- If the version bump merged but the GitHub release failed, fix the release workflow first. Do not publish Hex against missing or partial NIF assets.
-- Do not publish from a tree that still has the previous version in `checksum-Elixir.CloakedReq.Native.exs`.
+- The publish job runs only for the push that changes the checksum file. Merge nothing else to `main` between the version bump and the checksum PR, or the package holds sources that the NIF archives were not built from.
+- If the version bump merged but the GitHub release failed, fix the release workflow first. Open no checksum PR against missing or partial NIF assets.
+- The tag `vX.Y.Z` points at the version bump, so its checksum file is still the one of the release before. A git dependency on the tag needs `CLOAKED_REQ_BUILD=1`.

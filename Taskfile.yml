@@ -71,6 +71,15 @@ tasks:
     cmds:
       - zizmor --offline --persona=pedantic .github/workflows
 
+  checksum:download:
+    desc: Write the checksum file from the NIF archives of the GitHub release of @version
+    # The download reads the version and the targets from the metadata of the last compile. A cache
+    # in this checkout keeps a compile in another checkout from changing it, and --force writes it.
+    env:
+      RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH: "{{.ROOT_DIR}}/_build/rustler_precompiled"
+    cmds:
+      - mix do compile --force + rustler_precompiled.download CloakedReq.Native --all --print
+
   test:rust:external:
     cmds:
       - cargo test --manifest-path native/cloaked_req_native/Cargo.toml -- --ignored

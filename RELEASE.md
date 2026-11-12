@@ -36,7 +36,7 @@ After the version-bump PR is merged to `main`:
 
 1. `.github/workflows/release.yml` reads the `mix.exs` version and looks for the tag `vX.Y.Z`.
 2. If the tag exists, the workflow stops.
-3. The workflow builds the precompiled NIF archives.
+3. The workflow builds the precompiled NIF archives. A build fails when its NIF needs a symbol that no library defines, because the BEAM could not load it.
 4. When all builds pass, the workflow creates the tag and publishes the GitHub release for `vX.Y.Z`.
 5. The workflow stops there. It does not touch `checksum-Elixir.CloakedReq.Native.exs`.
 
@@ -58,21 +58,27 @@ Start only after the GitHub release for the same version exists, and all NIF arc
 ```bash
 git fetch origin
 git switch -c checksum-vX.Y.Z origin/main
-CLOAKED_REQ_BUILD=1 mix rustler_precompiled.download CloakedReq.Native --all
+task checksum:download
 ```
 
-The task compiles the new `@version`, downloads each asset from the GitHub
-release, and verifies it. It fails when an asset is missing. Commit the new
-`checksum-Elixir.CloakedReq.Native.exs`, and open a pull request.
+The task builds the NIF of the new `@version` from source first, because
+`mix rustler_precompiled.download` reads the version and the targets from the
+metadata of the last compile. The task keeps that metadata in `_build`, where a
+compile in another checkout cannot change it. Then it downloads each asset from
+the GitHub release, and verifies it. It fails when an asset is missing. Commit
+the new `checksum-Elixir.CloakedReq.Native.exs`, and open a pull request.
 
 ### 2. Merge the checksum PR
 
 The merge publishes. A push to `main` that changes the checksum file, for a
 version that has its tag, starts the `Publish to Hex` job of
-`.github/workflows/release.yml`. The job publishes the tree of that merge:
+`.github/workflows/release.yml`. The job publishes the sources of the tag
+`vX.Y.Z`, which the NIF archives were built from, with the checksum file of the
+merge:
 
 1. It compares the checksum file with the `SHA256SUMS` of the GitHub release, and stops when they differ.
-2. It runs `mix hex.publish --yes`, which uploads the package and its docs.
+2. It downloads the NIF of its runner, checks it against the checksum file, and loads it, as a consumer's build does.
+3. It runs `mix hex.publish --yes`, which uploads the package and its docs, and fails when the log says `Publishing failed` or `Publishing docs failed`.
 
 The job stores no Hex key. It runs in the GitHub environment `hex`, which only
 `main` can use, and Hex exchanges the job's OIDC token for a token that can
@@ -86,13 +92,15 @@ the job ends with `Package staged for approval at <url>`. A package owner
 approves it on hex.pm with their 2FA, within 7 days. The job does not wait for
 that approval: a GitHub job stops after 6 hours.
 
-When the job fails, fix the cause and re-run the job. It publishes the same commit.
-A failed docs upload prints `Publishing failed` but leaves the job green, so read
-the end of its log.
+When the job fails for a cause outside the repo, such as hex.pm or the workload
+identity, fix it and re-run the job. It publishes the same tag. A cause in the
+tag needs a new patch version. A re-run keeps the workflow file of its run, so
+after a fix of the job itself, release a new patch version, or a package owner
+runs `mix hex.publish` from the tag with the checksum file of the merge.
 
 ## Gotchas
 
 - Do not reuse versions. Hex versions are immutable.
-- The publish job runs only for the push that changes the checksum file. Merge nothing else to `main` between the version bump and the checksum PR, or the package holds sources that the NIF archives were not built from.
+- A change that merges between the version bump and the checksum PR ships only with the next version.
 - If the version bump merged but the GitHub release failed, fix the release workflow first. Open no checksum PR against missing or partial NIF assets.
 - The tag `vX.Y.Z` points at the version bump, so its checksum file is still the one of the release before. A git dependency on the tag needs `CLOAKED_REQ_BUILD=1`.

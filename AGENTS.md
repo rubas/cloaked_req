@@ -17,7 +17,7 @@ crate.
   connect-timeout defaults.
 - The native task replies on every path except an abort after the caller died, so `lib/cloaked_req/native.ex` waits for
   the reply with no timeout.
-- `mix rustler_precompiled.download` writes `checksum-Elixir.CloakedReq.Native.exs`. Never edit it by hand.
+- `task checksum:download` writes `checksum-Elixir.CloakedReq.Native.exs`. Never edit it by hand.
 
 ## Rules
 

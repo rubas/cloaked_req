@@ -33,11 +33,11 @@ jobs:
 
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         env:
-          INSTALL_DIR_FOR_OTP: ${{ runner.tool_cache }}/setup-beam/otp-29.0
-          INSTALL_DIR_FOR_ELIXIR: ${{ runner.tool_cache }}/setup-beam/elixir-1.20.2
+          INSTALL_DIR_FOR_OTP: ${{ runner.tool_cache }}/setup-beam/otp-29.1.2
+          INSTALL_DIR_FOR_ELIXIR: ${{ runner.tool_cache }}/setup-beam/elixir-1.20.5
         with:
-          elixir-version: "1.20.2"
-          otp-version: "29.0"
+          elixir-version: "1.20.5"
+          otp-version: "29.1.2"
 
       - name: Install dependencies
         run: |
@@ -50,7 +50,7 @@ jobs:
 
       - name: Install cargo-audit
         if: ${{ !cancelled() }}
-        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-audit
 

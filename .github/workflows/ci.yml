@@ -25,7 +25,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
           components: clippy, rustfmt
@@ -62,8 +62,8 @@ jobs:
 
       - name: Lint workflows
         run: |
-          curl -fsSLo "$RUNNER_TEMP/zizmor.tar.gz" https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
-          echo "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a  $RUNNER_TEMP/zizmor.tar.gz" | sha256sum -c
+          curl -fsSLo "$RUNNER_TEMP/zizmor.tar.gz" https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $RUNNER_TEMP/zizmor.tar.gz" | sha256sum -c
           tar -xzf "$RUNNER_TEMP/zizmor.tar.gz" -C "$RUNNER_TEMP" zizmor
           "$RUNNER_TEMP/zizmor" --offline --persona=pedantic .github/workflows
 
@@ -83,8 +83,8 @@ jobs:
           - otp: "28"
             elixir: "1.19"
             version-type: "loose"
-          - otp: "29.0"
-            elixir: "1.20.2"
+          - otp: "29.1.2"
+            elixir: "1.20.5"
             version-type: "strict"
             audit: true
 
@@ -93,7 +93,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
 

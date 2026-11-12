@@ -104,7 +104,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', needs.detect.outputs.tag) || github.sha }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable # zizmor: ignore[superfluous-actions] toolchain action provides target/component management not in the runner image
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -172,7 +172,7 @@ jobs:
 
       # The release keeps its own copy, so the artifact only has to outlive the release job.
       - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nif-${{ matrix.target }}
           path: "*cloaked_req_native-*.tar.gz"
@@ -221,7 +221,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}-release
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: nif-*
           merge-multiple: true
@@ -235,7 +235,7 @@ jobs:
         run: sha256sum *.tar.gz | tee SHA256SUMS
 
       - name: Create release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2 # zizmor: ignore[superfluous-actions] action handles release asset upload and notes generation beyond a plain gh release call
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4 # zizmor: ignore[superfluous-actions] action handles release asset upload and notes generation beyond a plain gh release call
         with:
           tag_name: ${{ needs.detect.outputs.tag }}
           files: |

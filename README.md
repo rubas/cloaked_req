@@ -85,8 +85,11 @@ request's headers are then the whole set. wreq still adds `accept-encoding` when
 decompresses the body.
 
 Req keeps request headers in a map, which loses their order. `:header_order` lists header names in wire order. Headers
-that are not in the list follow it. Without the profile's defaults there is no profile order, so pass `:header_order`
-with `default_headers: false`.
+that are not in the list follow it. Without the profile's defaults there is no profile order, and the headers go out
+sorted by name, so pass `:header_order` with `default_headers: false`.
+
+Both options apply to each request, also through a pool. A navigation with the profile's headers and a `fetch()`
+request with `default_headers: false` share the same connections, as they do in a browser.
 
 ```elixir
 Req.new(url: "https://example.com/api", headers: headers)
@@ -170,11 +173,10 @@ Req.new(url: "https://example.com")
 |> Req.get!()
 ```
 
-A pool fixes its client when you build it. The pool sets the impersonation profile, default headers, TLS
-verification, and connect timeout. On a request through a pool, the adapter still validates `:impersonate`,
-`:default_headers`, `:insecure_skip_verify`, and the `:connect_options` timeout, but ignores them. The proxy, source
-address, headers, body, cookie jar, and receive timeout of each request still apply. Each pool keeps up to 20 idle
-connections per host.
+A pool fixes its client when you build it. The pool sets the impersonation profile, TLS verification, and connect
+timeout. On a request through a pool, the adapter still validates `:impersonate`, `:insecure_skip_verify`, and the
+`:connect_options` timeout, but ignores them. The proxy, source address, headers, body, cookie jar, and receive timeout
+of each request still apply. Each pool keeps up to 20 idle connections per host.
 
 The BEAM garbage-collects the client when nothing references the pool struct, and its idle connections close. A worker
 that crashes without a teardown cannot leak the pool. To change a pool's identity, for example after its proxy exit

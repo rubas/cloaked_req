@@ -42,7 +42,6 @@ pub struct NativeRequest {
 #[rustler(decode)]
 pub struct NativePoolConfig {
     pub emulation: Option<String>,
-    pub default_headers: bool,
     pub insecure_skip_verify: bool,
     pub connect_timeout_ms: u64,
     pub pool_idle_timeout_ms: Option<u64>,

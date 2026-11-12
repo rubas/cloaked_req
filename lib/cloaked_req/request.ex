@@ -110,8 +110,8 @@ defmodule CloakedReq.Request do
     {:error, Error.new(:invalid_request, "impersonate must be a profile atom")}
   end
 
-  # The options that shape the client's fingerprint: the profile, whether its
-  # default headers are sent and in what order, and TLS verification.
+  # The options that shape the fingerprint: the profile, whether its default
+  # headers are sent, the header order, and TLS verification.
   @spec normalize_client_options(Req.Request.t()) ::
           {:ok,
            %{
@@ -137,24 +137,18 @@ defmodule CloakedReq.Request do
     end
   end
 
-  @doc """
-  Normalizes the `:default_headers` option to a boolean.
-  """
   @spec normalize_default_headers(term()) :: {:ok, boolean()} | {:error, Error.t()}
-  def normalize_default_headers(value) when is_boolean(value), do: {:ok, value}
+  defp normalize_default_headers(value) when is_boolean(value), do: {:ok, value}
 
-  def normalize_default_headers(_value) do
+  defp normalize_default_headers(_value) do
     {:error, Error.new(:invalid_request, "default_headers must be a boolean")}
   end
 
-  @doc """
-  Normalizes the `:header_order` option: `nil` or a list of header names,
-  lowercased like the names Req stores.
-  """
+  # Lowercases the names, like the names Req stores.
   @spec normalize_header_order(term()) :: {:ok, nil | [String.t()]} | {:error, Error.t()}
-  def normalize_header_order(nil), do: {:ok, nil}
+  defp normalize_header_order(nil), do: {:ok, nil}
 
-  def normalize_header_order(names) when is_list(names) do
+  defp normalize_header_order(names) when is_list(names) do
     if Enum.all?(names, &is_binary/1) do
       {:ok, Enum.map(names, &String.downcase/1)}
     else
@@ -162,7 +156,7 @@ defmodule CloakedReq.Request do
     end
   end
 
-  def normalize_header_order(_value) do
+  defp normalize_header_order(_value) do
     {:error, Error.new(:invalid_request, "header_order must be a list of header name strings")}
   end
 

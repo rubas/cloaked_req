@@ -38,10 +38,10 @@ defmodule CloakedReq do
   - `:receive_timeout` - Req option (default: 15 s). The README states what it bounds.
   - `:impersonate` - profile atom (e.g. `:chrome_136`, `:"safari_17.4.1"`)
   - `:default_headers` - boolean (default: `true`). `false` keeps the
-    profile's TLS and HTTP/2 fingerprint but drops its default headers, so
-    the request's own headers are sent as the exact set, in the given order
-    (e.g. a `fetch()` request without navigation-only headers). wreq still
-    adds `accept-encoding` when the request has none, since it decodes the body
+    profile's TLS and HTTP/2 fingerprint but drops its default headers for
+    this request, so the request's own headers are the exact set (e.g. a
+    `fetch()` request without navigation-only headers). wreq still adds
+    `accept-encoding` when the request has none, since it decodes the body
   - `:header_order` - list of header names: the wire order of the request's
     headers (Req keeps headers in a map, which loses order). Headers not in
     the list follow it

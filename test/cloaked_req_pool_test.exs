@@ -26,7 +26,6 @@ defmodule CloakedReq.PoolTest do
     assert {:ok, %Pool{ref: ref}} =
              Pool.new(
                impersonate: :chrome_136,
-               default_headers: false,
                insecure_skip_verify: true,
                connect_timeout: 5_000,
                pool_idle_timeout: 10_000
@@ -53,11 +52,6 @@ defmodule CloakedReq.PoolTest do
 
   test "non-atom impersonate is rejected" do
     assert {:error, %Error{type: :invalid_request}} = Pool.new(impersonate: "chrome_136")
-  end
-
-  test "non-boolean default_headers is rejected" do
-    assert {:error, %Error{type: :invalid_request, message: "default_headers must be a boolean"}} =
-             Pool.new(default_headers: "no")
   end
 
   test "non-boolean insecure_skip_verify is rejected" do

@@ -83,14 +83,14 @@ defmodule CloakedReqHeadersTest do
       assert wire_headers(raw) == @fetch_headers
     end
 
-    test "a pool built with default_headers: false governs its requests" do
-      {:ok, pool} = Pool.new(impersonate: :chrome_136, default_headers: false)
+    test "applies to a request through a pool" do
+      {:ok, pool} = Pool.new(impersonate: :chrome_136)
 
       raw =
         capture_request(
           &CloakedReq.attach(&1,
             pool: pool,
-            default_headers: true,
+            default_headers: false,
             header_order: @fetch_order
           ),
           headers: @fetch_headers

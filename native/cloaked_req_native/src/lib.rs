@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use wreq::cookie::{CookieStore, Cookies, Jar};
 use wreq::header::{HeaderMap, HeaderName, HeaderValue, OrigHeaderMap};
 use wreq::{Client, Method, Proxy, Uri, Version};
-use wreq_util::{Emulation, Profile};
+use wreq_util::Profile;
 
 rustler::atoms! {
     ok,
@@ -41,8 +41,7 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 /// (wreq's connection pool keys on both, so connections are never shared across
 /// them), so they stay out of the key. What remains is bounded by an LRU because
 /// `connect_timeout_ms` is caller-controlled.
-/// (emulation, default_headers, insecure_skip_verify, connect_timeout_ms)
-type ClientKey = (Option<String>, bool, bool, u64);
+type ClientKey = (Option<String>, bool, u64);
 
 const CLIENT_CACHE_CAP: usize = 128;
 
@@ -85,9 +84,6 @@ impl CookieStore for PublicSuffixGuard {
 /// is automatically dropped when the Elixir term is garbage collected.
 struct ClientResource {
     client: Client,
-    /// Whether the client sends the emulation's default headers. Without
-    /// them the request's own headers are the whole set, in the given order.
-    default_headers: bool,
 }
 
 impl rustler::Resource for ClientResource {}
@@ -105,13 +101,11 @@ impl rustler::Resource for RequestCancellationResource {
 
 fn get_or_build_client(
     emulation: Option<&str>,
-    default_headers: bool,
     insecure_skip_verify: bool,
     connect_timeout_ms: u64,
 ) -> Result<Client, NativeError> {
     let key = (
         emulation.map(|s| s.to_string()),
-        default_headers,
         insecure_skip_verify,
         connect_timeout_ms,
     );
@@ -125,13 +119,7 @@ fn get_or_build_client(
 
     // Build with no lock held so a slow Client::build() never blocks other
     // cache users. A racing duplicate build is harmless: the loser is dropped.
-    let client = build_client(
-        emulation,
-        default_headers,
-        insecure_skip_verify,
-        connect_timeout_ms,
-        None,
-    )?;
+    let client = build_client(emulation, insecure_skip_verify, connect_timeout_ms, None)?;
 
     let mut cache = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = cache.get(&key) {
@@ -143,7 +131,6 @@ fn get_or_build_client(
 
 fn build_client(
     emulation: Option<&str>,
-    default_headers: bool,
     insecure_skip_verify: bool,
     connect_timeout_ms: u64,
     pool_idle_timeout_ms: Option<u64>,
@@ -166,15 +153,7 @@ fn build_client(
                 )
             })?;
 
-        // `headers(false)` keeps the profile's TLS and HTTP/2 fingerprint but
-        // drops its default headers, so the caller can send an exact set
-        // (e.g. a fetch() request without navigation-only headers).
-        builder = builder.emulation(
-            Emulation::builder()
-                .profile(profile)
-                .headers(default_headers)
-                .build(),
-        );
+        builder = builder.emulation(profile);
     }
 
     if insecure_skip_verify {
@@ -240,17 +219,11 @@ fn nif_create_cookie_jar() -> ResourceArc<CookieJarResource> {
 fn nif_new_pool<'a>(env: Env<'a>, config: NativePoolConfig) -> Term<'a> {
     build_client(
         config.emulation.as_deref(),
-        config.default_headers,
         config.insecure_skip_verify,
         config.connect_timeout_ms,
         config.pool_idle_timeout_ms,
     )
-    .map(|client| {
-        ResourceArc::new(ClientResource {
-            client,
-            default_headers: config.default_headers,
-        })
-    })
+    .map(|client| ResourceArc::new(ClientResource { client }))
     .encode(env)
 }
 
@@ -392,18 +365,13 @@ async fn execute_request_async(
     cookie_jar: Option<ResourceArc<CookieJarResource>>,
     pool: Option<ResourceArc<ClientResource>>,
 ) -> Result<(NativeResponseMeta, Vec<Bytes>), NativeError> {
-    // A pool's client governs default headers, like it governs emulation.
-    let (client, default_headers) = match &pool {
-        Some(p) => (p.client.clone(), p.default_headers),
-        None => (
-            get_or_build_client(
-                request.emulation.as_deref(),
-                request.default_headers,
-                request.insecure_skip_verify,
-                request.connect_timeout_ms,
-            )?,
-            request.default_headers,
-        ),
+    let client = match &pool {
+        Some(p) => p.client.clone(),
+        None => get_or_build_client(
+            request.emulation.as_deref(),
+            request.insecure_skip_verify,
+            request.connect_timeout_ms,
+        )?,
     };
 
     let method = Method::from_bytes(request.method.as_bytes()).map_err(|reason| {
@@ -441,18 +409,17 @@ async fn execute_request_async(
         builder = builder.header(name.as_str(), value.0.as_slice());
     }
 
-    // Pin the wire order: an explicit header_order first, then any remaining
-    // request headers. Without the emulation's defaults there is no profile
-    // order to fall back on, so the request's own order is pinned even when
-    // no header_order is given.
-    if request.header_order.is_some() || !default_headers {
-        let names = request
-            .header_order
-            .iter()
-            .flatten()
-            .chain(request.headers.iter().map(|(name, _)| name));
+    // The profile's default headers are the client's default headers. The
+    // switch is per request, so a navigation and a fetch() share one client
+    // and its connections, as they do in a browser.
+    if !request.default_headers {
+        builder = builder.default_headers(false);
+    }
 
-        let mut order = OrigHeaderMap::with_capacity(request.headers.len());
+    // wreq writes the listed headers first, in this order, and then the rest
+    // in the order they had.
+    if let Some(names) = &request.header_order {
+        let mut order = OrigHeaderMap::with_capacity(names.len());
         for name in names {
             order.insert(name.clone());
         }
@@ -1083,9 +1050,9 @@ mod tests {
         // distinct values than the cap and confirm the LRU never grows past it,
         // so a malicious or accidental rotation cannot leak Clients forever.
         for i in 0..(CLIENT_CACHE_CAP + 50) {
-            let _ = build_client(None, true, false, 900_000 + i as u64, None).map(|client| {
+            let _ = build_client(None, false, 900_000 + i as u64, None).map(|client| {
                 let mut cache = CLIENT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-                cache.put((None, true, false, 900_000 + i as u64), client);
+                cache.put((None, false, 900_000 + i as u64), client);
             });
         }
 
@@ -1106,13 +1073,13 @@ mod tests {
 
     #[test]
     fn build_client_accepts_pool_idle_timeout() {
-        let result = build_client(Some("chrome_136"), true, false, 30_000, Some(5_000));
+        let result = build_client(Some("chrome_136"), false, 30_000, Some(5_000));
         assert!(result.is_ok(), "pool client with idle timeout should build");
     }
 
     #[test]
     fn build_client_rejects_unknown_emulation_profile() {
-        let result = build_client(Some("unknown_browser"), true, false, 30_000, None);
+        let result = build_client(Some("unknown_browser"), false, 30_000, None);
         let err = result.map(drop).expect_err("expected error");
         assert_eq!(err.type_name, "invalid_request");
         assert_eq!(err.message, "unknown emulation profile");

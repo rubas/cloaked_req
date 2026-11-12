@@ -27,6 +27,9 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-detect
       cancel-in-progress: false
+      # Keep every pending run. A newer push would otherwise cancel the pending
+      # run of a checksum merge, and only that run publishes.
+      queue: max
     outputs:
       should_release: ${{ steps.resolve.outputs.should_release }}
       should_publish: ${{ steps.resolve.outputs.should_publish }}

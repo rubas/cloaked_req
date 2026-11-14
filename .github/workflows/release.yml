@@ -330,11 +330,20 @@ jobs:
         run: mix run --no-start -e 'Code.ensure_loaded!(CloakedReq.Native)'
 
       # With no Hex credential in the job, Hex publishes through the workload identity. A failed upload
-      # of the docs still exits 0, so the step reads the log.
+      # of the docs still exits 0, so the step reads the log. Hex refuses a second upload of a version
+      # that hex.pm lists, so for such a version, as one approved after a failed docs upload, the step
+      # uploads only the docs.
       - name: Publish the package and its docs
         shell: bash
+        env:
+          VERSION: ${{ needs.detect.outputs.version }}
         run: |
-          mix hex.publish --yes 2>&1 | tee "$RUNNER_TEMP/publish.log"
+          case "$(curl -sS -o /dev/null -w '%{http_code}' "https://hex.pm/api/packages/cloaked_req/releases/$VERSION")" in
+            404) ARGS=() ;;
+            200) ARGS=(docs) ;;
+            *) echo "::error::hex.pm did not say whether it lists cloaked_req $VERSION"; exit 1 ;;
+          esac
+          mix hex.publish "${ARGS[@]}" --yes 2>&1 | tee "$RUNNER_TEMP/publish.log"
           if grep -E 'Publishing (docs )?failed' "$RUNNER_TEMP/publish.log"; then
             exit 1
           fi

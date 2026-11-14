@@ -93,10 +93,13 @@ approves it on hex.pm with their 2FA, within 7 days. The job does not wait for
 that approval: a GitHub job stops after 6 hours.
 
 When the job fails for a cause outside the repo, such as hex.pm or the workload
-identity, fix it and re-run the job. It publishes the same tag. A cause in the
-tag needs a new patch version. A re-run keeps the workflow file of its run, so
-after a fix of the job itself, release a new patch version, or a package owner
-runs `mix hex.publish` from the tag with the checksum file of the merge.
+identity, fix it and re-run the job. It publishes the same tag. When hex.pm
+already lists the version, for example after an owner approved a release
+whose docs upload failed, the job uploads only the docs, which wait for
+approval too. A cause in the tag needs a new patch version. A re-run keeps
+the workflow file of its run, so after a fix of the job itself, release a
+new patch version, or a package owner runs `mix hex.publish` from the tag
+with the checksum file of the merge.
 
 ## Gotchas
 

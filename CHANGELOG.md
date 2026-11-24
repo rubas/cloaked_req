@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Changed
+
+- CI uses OTP 29.1.3 (was 29.1.2), which fixes GHSA-9p2q-5p4x-rhpq in `snmp` and GHSA-7fjc-wcvc-vp96 in `inets`.
+
 ## [0.8.1] - 12.11.2026
 
 ### Security

@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.8.2] - 25.11.2026
+
+### Security
+
+- The NIF now builds with async-compression 0.4.54 and compression-codecs 0.4.49, which fix GHSA-2cpr-3jh5-wvp8. Before, a server could answer with a large-window `br` body of under 1 KiB and make the NIF allocate about 1 GiB for that response. `:max_body_size` didn't stop it, because the decoder allocated its buffer before it wrote a byte.
+- `url` 2.5.9 for RUSTSEC-2026-0592 and `cookie` 0.18.3 for RUSTSEC-2026-0594. The NIF never called the affected functions.
+
 ### Changed
 
 - CI uses OTP 29.1.3 (was 29.1.2), which fixes GHSA-9p2q-5p4x-rhpq in `snmp` and GHSA-7fjc-wcvc-vp96 in `inets`.
